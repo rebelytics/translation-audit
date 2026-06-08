@@ -1,0 +1,54 @@
+# Translation Audit — project configuration
+#
+# Copy this file to your project folder as config.yml and fill in the
+# values. The agent will create / read this file during Phase 1 (Setup).
+
+# Human-readable project name. Used in the audit doc title.
+project_name: example-com-audit
+
+# Language treated as the source of truth for comparison.
+# ISO 639-1 code (e.g., en, de, nl).
+source_language: en
+
+# Languages to audit. ISO 639-1 codes or locale codes (e.g., pt-BR).
+target_languages:
+  - de
+  - fr
+  - es
+
+# Sitemap URL(s). Pass multiple values if the site uses per-language
+# sitemaps without a central index.
+sitemaps:
+  - https://example.com/sitemap.xml
+
+# How many URLs to fetch and audit per pass.
+# 20 is a sensible default for full audits (meta + body).
+# 50 is reasonable for meta-only mode.
+batch_size: 20
+
+# What page fields the audit covers.
+# Options: "meta_only" (title + h1 + meta_description)
+#          "full"      (meta + body text)
+audit_scope: full
+
+# What output format(s) to produce.
+# Options: "docx", "md", or "docx+md".
+output_format: docx+md
+
+# Page-type weights for prioritisation. Higher = audited sooner.
+# Page types are filled in during prioritisation; leave empty if the
+# project doesn't use page-type segmentation.
+page_type_weights:
+  product: 10
+  category: 8
+  content: 5
+  blog: 3
+  legal: 1
+
+# Polite-delay between HTTP fetches, in seconds. Increase if you're
+# auditing a small site and don't want to load their servers.
+fetch_polite_delay: 1.0
+
+# Optional: a project-specific User-Agent. Defaults to the skill's
+# generic UA if not set.
+# user_agent: my-audit-bot/1.0 (+https://example.com/contact)

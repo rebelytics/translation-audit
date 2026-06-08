@@ -1,0 +1,48 @@
+{
+  "project_name": "example-com-audit",
+  "audit_date": "2026-05-28",
+  "batch_number": 1,
+  "source_language": "en",
+  "audited_languages": ["de", "fr", "es"],
+  "findings": [
+    {
+      "language": "de",
+      "url": "https://example.com/de/example-product",
+      "field": "meta_description",
+      "excerpt": "Beispieltext mit einem Tippfehlre.",
+      "diagnosis": "Tippfehler: 'Tippfehlre' should be 'Tippfehler'.",
+      "bucket": "likely_error",
+      "source_excerpt": null,
+      "sub_type": null,
+      "review_status": "unreviewed",
+      "review_note": null,
+      "reviewer": null
+    },
+    {
+      "language": "de",
+      "url": "https://example.com/de/example-product",
+      "field": "h1",
+      "excerpt": "Heavy-duty Mixer mit kraftvollem Motor",
+      "diagnosis": "'Heavy-duty' is a literal English calque; the natural German would be something like 'leistungsstark' or 'belastbar'. Could be a deliberate anglicism.",
+      "bucket": "worth_checking",
+      "source_excerpt": "Heavy-duty mixer with a powerful motor",
+      "sub_type": null,
+      "review_status": "unreviewed",
+      "review_note": null,
+      "reviewer": null
+    },
+    {
+      "language": "de",
+      "url": "https://example.com/de/example-product",
+      "field": "body",
+      "excerpt": "Add to cart",
+      "diagnosis": "Untranslated English UI string visible in the body extraction. Visibility unclear from raw HTML — confirm whether it actually renders on the page (it may live in a hidden cart-notification template that only surfaces on interaction).",
+      "bucket": "worth_checking",
+      "source_excerpt": null,
+      "sub_type": "visibility_unconfirmed",
+      "review_status": "unreviewed",
+      "review_note": null,
+      "reviewer": null
+    }
+  ]
+}
