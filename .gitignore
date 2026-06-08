@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Audit project artefacts — never commit real client data
+# (these are example paths; users should add their own project folders)
+**/audit-projects/
+**/data/pages-*.json
+**/prioritisation/inputs/
+**/findings/*.docx
+**/findings/*.md
+**/urls/*.csv
+!**/urls/*.csv.template
+
+# Logs
+*.log
