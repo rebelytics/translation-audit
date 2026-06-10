@@ -90,8 +90,10 @@ SKILL.md — you don't need to remember any of it.
   state lists; `state.py` moves URLs between them.
 - `data/pages-{lang}-batch-N.json` — cached live page content.
 - `findings/raw/batch-NN.json` — raw findings (the canonical data store).
-- `findings/audit-YYYY-MM-DD-batch-NN.docx` + `.md` — the reviewer-facing
-  deliverable you send to your translator or in-house language lead.
+- `findings/audit-YYYY-MM-DD-batch-NN.html` (one tab per language) + `.md`
+  — the reviewer-facing deliverable you send to your translator or in-house
+  language lead. Print the HTML to PDF for a polished client hand-off.
+  (A `.docx` is available on request via `build_audit_doc.py --format docx`.)
 - `prioritisation/inputs/` — drop your GSC / GA4 / page-type weight
   files here; the agent reads them.
 - `prioritisation/notes.md` — rationale of how the priority score was

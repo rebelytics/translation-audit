@@ -31,9 +31,10 @@ A six-phase workflow the agent runs for you:
    body text). Uses a rendered browser pass for the body layer when
    available.
 5. **Audit** — flag findings against a structured error taxonomy and
-   produce a deliverable (Word + Markdown) grouped by language, with
-   a "Likely errors / Worth checking" split that lets non-native
-   reviewers contribute credibly.
+   produce a deliverable (a self-contained HTML report with per-language
+   tabs, plus a Markdown mirror) grouped by language, with a "Likely
+   errors / Worth checking" split that lets non-native reviewers
+   contribute credibly.
 6. **Verify** — re-fetch URLs after fixes deploy and move them
    between state lists (`open → audited → verified`, or back to the
    queue if a fix introduced a new issue).
@@ -77,8 +78,10 @@ layer. The cheap-HTTP path is reliable for user-facing metadata
 (title, meta description, H1) but over-captures hidden DOM content
 as body text. See USER-GUIDE.md for setup and fallback.
 
-**Requirements:** Python 3.9+, `requests`, `beautifulsoup4`,
-`python-docx`, `PyYAML`. See `requirements.txt`.
+**Requirements:** Python 3.9+, `requests`, `beautifulsoup4`, `PyYAML`.
+`python-docx` is optional — only for the Word (`.docx`) export; the
+default HTML + Markdown deliverables need no third-party packages. See
+`requirements.txt`.
 
 ## Quick start
 
@@ -103,7 +106,7 @@ translation-audit/
 │   ├── fetch_sitemap.py        # sitemap → open.csv (hreflang-aware)
 │   ├── build_mapping.py        # fallback for per-ccTLD sites
 │   ├── fetch_pages.py          # URL batch → cached page content
-│   ├── build_audit_doc.py      # findings JSON → .docx + .md
+│   ├── build_audit_doc.py      # findings JSON → .html + .md (+ docx opt-in)
 │   ├── apply_verdicts.py       # post-review verdict CSV → JSON
 │   └── state.py                # three-list lifecycle bookkeeping
 ├── references/

@@ -73,6 +73,46 @@ checking** with a "could be deliberate" hedge. When in doubt, hedge.
 Overclaiming destroys the audit's credibility with the people who
 actually have to act on it.
 
+**Absence findings are high-stakes — verify before banking.** "Not found
+by my query" ≠ "not present on the page." A structural-markup absence claim
+("this site has no hreflang", "no canonical", "no alternate links") is
+exactly the kind of confident statement that lands in a client deliverable
+and is cheap to get wrong:
+
+- **Match HTML attributes case-insensitively.** HTML attributes are
+  case-insensitive, but React/Next.js/Vue emit camelCase DOM attributes —
+  `hrefLang`, `crossOrigin`, `charSet`. A `hreflang="` (lowercase) regex
+  returns 0 matches on a JSX-rendered site that actually has correct
+  hreflang, which Google reads fine. Always use case-insensitive matching
+  (`(?i)`) when grepping markup for attributes.
+- **Confirm any "X is missing entirely" finding with a second method**
+  before reporting it — a different regex, the rendered DOM, or a fetch via
+  another tool. A single case-sensitive grep is not enough to assert a
+  structural feature is missing.
+
+**Flag the anomaly, not the remedy.** A finding points at what looks
+wrong — it does not prescribe the fix or assert the consequence. Name
+the anomaly and stop:
+
+- **No prescribed remedy.** Don't write "should be X." The correct fix
+  often needs domain knowledge the audit doesn't have, and a confident-
+  but-wrong prescription destroys credibility faster than anything else.
+  (A meta description with a stray `<br>` is the example that bit us:
+  "should be a normal line break" was wrong — line breaks in a meta do
+  nothing — when the only defensible statement was "there's a literal
+  `<br>` here.")
+- **No asserted impact.** Don't claim "breaks Y" or "shows as Z in
+  search" unless it's actually been verified. You usually don't know
+  how a string renders downstream.
+- **Don't state the obvious.** If the excerpt makes the problem
+  self-evident — an English string on a localised page is visibly
+  untranslated; a misspelt word is visibly misspelt — the reader can
+  see it. Don't narrate it.
+
+Most findings need one short sentence; many need nothing beyond the
+excerpt. Verbose, presumptuous diagnoses are the single biggest thing
+that makes a deliverable read as junior.
+
 ### 2. Three lists, one direction
 
 State management is built on three CSV files that record where each URL
@@ -122,15 +162,19 @@ translation-audit/
     │   └── batch-NN.json               # canonical findings JSON
     │                                   # (input to build_audit_doc.py;
     │                                   #  carries review_status state)
-    ├── audit-YYYY-MM-DD-batch-NN.docx  # reviewer-facing deliverable
-    └── audit-YYYY-MM-DD-batch-NN.md    # markdown mirror for version control
+    ├── audit-YYYY-MM-DD-batch-NN.html  # reviewer-facing deliverable (tabs per language)
+    ├── audit-YYYY-MM-DD-batch-NN.md    # markdown mirror for version control
+    └── audit-YYYY-MM-DD-batch-NN.docx  # only when --format docx is requested
 ```
 
 The split between `findings/raw/batch-NN.json` and the rendered
-`audit-*.docx` / `.md` is deliberate: the JSON is the data store and
+`audit-*.html` / `.md` is deliberate: the JSON is the data store and
 carries the post-review `review_status` state once that's captured;
-the `.docx` / `.md` are reviewer-facing renders that deliberately
-omit verdict state (see Phase 5).
+the `.html` / `.md` are reviewer-facing renders that deliberately
+omit verdict state (see Phase 5). The `.html` is the primary
+deliverable — a self-contained, zero-dependency report with one tab
+per language (prints cleanly to PDF for a client hand-off). The
+`.docx` is opt-in for clients who require Word.
 
 All file paths in this skill resolve relative to `[project folder]`. The
 project folder name (`translation-audit/`) can be overridden in
@@ -182,9 +226,12 @@ Ask the user for:
    Default: 20 for full audits (meta + body), 50 for meta-only mode.
    Body audits are heavier per URL; smaller batches keep findings docs
    tractable for human review.
-6. **Output format** — `docx+md` (default), `docx`, or `md`. The .docx
-   is the deliverable for translators who don't work in plain text; the
-   .md is the version-controllable mirror.
+6. **Output format** — `html+md` (default), `html`, `md`, or `docx`.
+   The **HTML** is the primary deliverable: a self-contained,
+   zero-dependency report with one tab per language that prints cleanly
+   to PDF for a client hand-off. The `.md` is the version-controllable
+   mirror. `.docx` is opt-in for clients who require Word (needs
+   python-docx).
 
 Write the answers to `config.yml`. Create the empty CSVs with their
 canonical headers (see Phase 2 for the schema). Create `README.md` with
@@ -412,7 +459,7 @@ distinct from "I confirmed it's hidden", and the rendered pass
 (below) is what resolves the unconfirmed case up to Likely error or
 down to dom_only.
 
-### Rendered browser pass — conditionally required for the body layer
+### Rendered browser pass — required for the body layer when a browser is available
 
 The cheap-HTTP path (`requests` + BeautifulSoup) is sufficient for
 user-facing metadata (title, meta description, H1) — those fields are
@@ -427,13 +474,17 @@ to `audit_scope` in `config.yml`:
 - **`audit_scope: meta_only`** — the rendered pass is never required.
   Title, meta description, and H1 are reliably captured by the raw
   HTTP fetch.
-- **`audit_scope: full`** (default) — the body layer requires
-  **either** a rendered visible-text pass through a browser
-  integration **or** explicit degradation: every body finding tagged
-  `visibility_unconfirmed` (see Body-layer epistemic states above)
-  and a line written to `prioritisation/notes.md` recording that the
-  body ran un-rendered. Body findings may not be emitted as if
-  visible without one or the other.
+- **`audit_scope: full`** (default) — body findings **must** be
+  verified against rendered output. When a browser is available a
+  rendered pass is **mandatory, not optional**: prefer capturing the
+  body from the rendered DOM at fetch time (e.g. Claude in Chrome
+  `get_page_text`, or an iframe's `innerText`) so body findings are
+  confirmed-visible by construction; otherwise, if the body was first
+  taken from a raw fetch, run the rendered verification in *Resolving
+  `visibility_unconfirmed`* (below) before delivery. Shipping a body
+  finding with the `visibility_unconfirmed` caveat is a **last resort,
+  only when no browser exists at all** — then tag every such finding
+  and note in `prioritisation/notes.md` that the body ran un-rendered.
 
 A `require_rendered_body: true` flag in `config.yml` turns the soft
 gate into a hard stop — projects that want to refuse body findings
@@ -473,6 +524,33 @@ path. Strings still surfaced after these drops, when the rendered
 pass is unavailable, carry `visibility_unconfirmed` rather than
 being treated as confirmed visible.
 
+### Resolving `visibility_unconfirmed` with a rendered check
+
+A `visibility_unconfirmed` tag is a *to-do*, not a final state. If a
+browser is available, resolve it before delivery rather than shipping
+the caveat to the reviewer:
+
+1. Load the **rendered** page in the browser and confirm whether the
+   flagged string is actually shown.
+2. **Confirmed visible** → clear `sub_type` (the finding renders with
+   no caveat, and can be a Likely error if its class warrants it).
+   **Confirmed hidden** (template / `display:none`) → set
+   `dom_only_not_rendered`.
+3. Keep `visibility_unconfirmed` only when no rendered check is
+   possible at all.
+
+**`innerText` under-reports — cross-check before concluding "hidden".**
+A string can be genuinely visible yet absent from
+`document.body.innerText`: CSS-rotated or absolutely-positioned badges
+(e.g. a sale ribbon), collapsed accordions, and JS-hydrated product
+grids are common culprits. When `innerText` lacks a string the raw DOM
+(`textContent`) contains, **take a screenshot** (or check the
+element's `getBoundingClientRect` / computed style) before deciding —
+don't downgrade a real, visible finding on the strength of an
+`innerText` miss. The rendered check also catches raw-HTML **false
+positives** — a string present in the source HTML but never rendered
+(e.g. a nav label the live page drops); remove those.
+
 ---
 
 ## Phase 5 — Audit per language
@@ -494,14 +572,21 @@ For each URL in the batch:
 4. **Classify each finding** as Likely error or Worth checking using
    the rule in Principle 1. Default to Worth checking when in doubt.
 5. **Record the finding** with: URL, field affected (`title` / `h1` /
-   `meta_description` / `body`), the exact text or excerpt, the
-   diagnosis in one or two sentences, the source-language equivalent
-   if comparison-based, and (for body findings) the `sub_type`
-   reflecting the epistemic state of the excerpt (see Phase 4 — Body-
-   layer epistemic states). Reserve `review_status`, `review_note`,
-   and `reviewer` as fields that get populated after native review
-   via `apply_verdicts.py`; they default to `unreviewed` / `null` /
-   `null` at audit time and stay there until a human reviews.
+   `meta_description` / `body`), the exact text or excerpt, a **terse
+   diagnosis** (name the anomaly only — per Principle 1: no prescribed
+   remedy, no asserted impact, nothing the excerpt already makes
+   obvious; many findings need no diagnosis at all), and (for body
+   findings) the `sub_type`. Include `source_excerpt` **only** when the
+   finding is a genuine source-vs-target divergence the reader needs
+   both sides of (content mismatch, a changed claim) — omit it when the
+   excerpt is self-evident (an untranslated English string, a typo, a
+   stray tag), where repeating the near-identical source just adds
+   noise. When one root issue spans several elements of the *same page
+   in the same language* (e.g. title + meta + H1 all left in English),
+   give them a shared `issue_group` key so they render as one card
+   instead of repeating the diagnosis per element. Reserve
+   `review_status`, `review_note`, and `reviewer` for post-review via
+   `apply_verdicts.py` (default `unreviewed` / `null` / `null`).
 6. **For body-layer findings sourced from raw HTML**, set the
    `sub_type` per Phase 4's epistemic state table:
    `dom_only_not_rendered` when the excerpt came from a confirmed-
@@ -518,34 +603,78 @@ pass; it's a flagging pass. If a page's body has more than ~10 candidate
 findings, narrow to the most impactful and note that further review
 may be warranted rather than listing every minor flaw.
 
+### Scaling the audit across locales
+
+A full audit — every locale × every page type — is too large for one
+pass. Fan it out: **one agent per language**, each reading only its
+cached `data/pages-{lang}-batch-N.json` and emitting that language's
+findings. Languages are independent, so this parallelises cleanly (e.g.
+via a workflow of per-language agents).
+
+Subagents can fabricate or paraphrase excerpts, so the fan-out is only
+safe behind a **mandatory central verification gate**: after the agents
+return, check that **every finding's `excerpt` is a verbatim substring
+of the cached field it claims** (`title` / `meta_description` / `h1` /
+`body_text`, and the nested `source_pair` for `source_excerpt`). Drop
+any finding that doesn't match — this is what turns "trust the agent"
+into "verify against source data," and it is not optional. Re-state the
+diagnosis rules (no "should be", no impact claims, terse) in the agent
+contract and post-scan the merged findings for slips. Breadth matters
+too: auditing *all* page types — not just core commercial pages — is
+what surfaces page-type-level gaps (e.g. author or wiki templates left
+untranslated across every market).
+
 ### Per-language section structure
 
 After auditing all URLs in the batch, produce the audit doc grouped
-by target language. Inside each language section:
+by target language — in the HTML deliverable each language is its own
+**tab**, so a section can be handed to that market's reviewer on its
+own. Within a language, items split into **Likely errors** and **Worth
+checking**, and findings that share an `issue_group` collapse into one
+card (diagnosis stated once, each affected element listed beneath it):
 
 ```
-## [Language name] ([code])
+[Language name] ([code])
 
-### Likely errors
+Likely errors
+  • [terse diagnosis — the anomaly, nothing more]
+       Title             — [URL]   "[exact excerpt]"
+       Meta description  — [URL]   "[exact excerpt]"
+  • [terse diagnosis]
+       Meta description  — [URL]   "[exact excerpt]"
 
-- [URL]
-  Field: [title / h1 / meta_description / body]
-  Excerpt: "[exact text from the page]"
-  Diagnosis: [one or two sentences]
-
-- [URL]
-  ...
-
-### Worth checking
-
-- [URL]
-  Field: [...]
-  Excerpt: "[...]"
-  Diagnosis: [...] — could be deliberate.
-
-- [URL]
-  ...
+Worth checking
+  • [terse diagnosis] (could be deliberate)
+       H1                — [URL]   "[exact excerpt]"
 ```
+
+Repetition **across** languages is fine — each tab stands alone, so the
+same one-line diagnosis appearing in several language tabs is expected.
+Repetition **within** a language (the same block restated for title,
+meta and H1 of one page) is what `issue_group` removes.
+
+**A grouped card's headline must be true of every item under it.** When an
+`issue_group` bundles several findings, set a group-level `issue_title` that
+describes the whole block (e.g. "Several English strings left untranslated on
+the author page") — don't let the card inherit only the first finding's
+diagnosis, which fits just one item. Group **only same-theme** findings: if a
+group would mix distinct issue types (a missing-diacritic H1 *and* a duplicated
+brand token), split them into separate cards instead. `build_audit_doc.py` uses
+`issue_title` as the card headline when present, else the first finding's
+diagnosis.
+
+"Each tab stands alone" cuts both ways: it not only *permits* cross-language
+repetition, it **requires** it. A defect present in several languages'
+equivalent field must be emitted in **every** affected language tab — never
+consolidated onto the source tab or one tab. `issue_group` de-dupes strictly
+**within** a language; it does **not** propagate a recurring defect across
+languages, so that propagation is your responsibility. Example: a "TCP lll"
+defect (three lowercase L's instead of Roman "III") in the title of the EN
+source and the DE/ES/IT/NL/PT versions must appear as a finding in each of
+those tabs — a reviewer for one market only opens their own tab, so a defect
+logged elsewhere is invisible to them. **Per-finding pre-flight check:** does
+this same defect appear in other languages' equivalent field? If so, emit it
+there too.
 
 If a language has no Likely errors, omit that subsection rather than
 leaving it empty. Same for Worth checking. If a language has no
@@ -554,6 +683,24 @@ findings at all, the section reads `No issues flagged in this batch.`
 appear in `audited_languages` (below) even if zero findings reference
 it. Coverage (what was checked) and findings (what was wrong) are
 reported independently.
+
+**Show coverage at the URL level, not just the language level.** A
+language-level "audited" flag is not enough — a reader still can't tell
+WHICH pages were checked, so "No issues flagged" reads as "maybe nothing
+was looked at." Each language section must include a **Pages checked** list
+of the audited URLs:
+
+```
+Pages checked
+  • [URL]
+  • [URL]
+```
+
+For a clean language this is the whole section under the
+`No issues flagged in this batch.` line; for a language with findings, list
+the checked-but-clean URLs too, so the examined set is fully visible. An
+audit deliverable should make coverage legible, not just defects — "no
+issues" is only trustworthy when the reader can see the examined set.
 
 ### Findings JSON and `audited_languages`
 
@@ -567,6 +714,11 @@ The audit phase writes the raw findings to
   "batch_number": N,
   "source_language": "en",
   "audited_languages": ["de", "fr", "es"],
+  "coverage": {
+    "de": ["https://…/de/page-a", "https://…/de/page-b"],
+    "fr": ["https://…/fr/page-a"],
+    "es": ["https://…/es/page-a"]
+  },
   "findings": [ ... ]
 }
 ```
@@ -578,20 +730,38 @@ from the deliverable, getting misread as "not checked" instead of
 "checked, clean". Always populate it with every language touched in
 the batch.
 
+The `coverage` map carries the **per-language set of audited URLs** that
+the deliverable's "Pages checked" list renders from — what turns a clean
+language from an unsupported "No issues" into evidence of work performed.
+Populate it for every audited language, clean or not. (`build_audit_doc.py`
+must render a "Pages checked" list per language from this map; the SKILL
+documents the behaviour, the script change lives in `scripts/`.)
+
+Each finding object carries `language`, `url`, `field`, `excerpt`,
+`diagnosis`, `bucket`, plus optional `source_excerpt`, `sub_type`,
+`issue_group` (collapse-into-one-card key, scoped per language), and
+`highlight` (a substring of the excerpt to mark in the HTML). The full
+per-finding shape is documented at the top of `build_audit_doc.py`.
+
 ### Output
 
-Write the reviewer-facing deliverable to:
+Write the reviewer-facing deliverable with the bundled script
+`scripts/build_audit_doc.py`, which renders from the raw findings JSON:
 
-- `findings/audit-YYYY-MM-DD-batch-NN.docx` (always)
-- `findings/audit-YYYY-MM-DD-batch-NN.md` (if `output_format` includes
-  `md`)
+- `findings/audit-YYYY-MM-DD-batch-NN.html` — **primary**. A
+  self-contained report (inline CSS/JS, no dependencies) with a summary
+  header, one **tab per language**, colour-coded Likely / Worth
+  buckets, and grouped issue cards. Opens in any browser; print to PDF
+  for a client hand-off.
+- `findings/audit-YYYY-MM-DD-batch-NN.md` — version-controllable mirror.
+- `findings/audit-YYYY-MM-DD-batch-NN.docx` — only with `--format docx`
+  (requires python-docx).
 
-Use the bundled script `scripts/build_audit_doc.py` to assemble both
-from the raw findings JSON. The script enforces the section structure
-above, emits a "No issues flagged in this batch." line for any clean
-`audited_languages` entry, and applies a consistent Word style
-(Heading 1 for the audit title, Heading 2 per language, Heading 3 for
-Likely errors / Worth checking, bullet list for findings).
+Default output is `html,md`. The script emits a "No issues flagged in
+this batch." line for any clean `audited_languages` entry, collapses
+findings that share an `issue_group` into one card, and escapes
+excerpts so literal markup (a stray `<br>`, an `&amp;`) shows verbatim
+instead of rendering.
 
 The deliverable **must not** show verdict tags or review attribution.
 The audit doc is INPUT to native review, not OUTPUT of it (see
@@ -824,15 +994,22 @@ The scripts in `scripts/`:
   `visibility: hidden` containers before returning body text.
   Supports `--from-csv` mode to read pre-extracted content from a CSV
   instead of fetching, for use in sandboxed environments.
-- **`build_audit_doc.py`** (Phase 5) — assembles
-  `findings/audit-*.docx` and `audit-*.md` from a findings JSON at
-  `findings/raw/batch-NN.json`. Renders the reviewer-facing
-  deliverable with the Likely errors / Worth checking split, prefixes
-  body-layer findings by `sub_type` (`[DOM-only, not rendered]` or
-  `[Visibility unconfirmed — verify on rendered page]`), and emits a
-  "No issues flagged in this batch." line for every clean
-  `audited_languages` entry. The deliverable **does not** show
-  verdict state — see Phase 5.5.
+- **`build_audit_doc.py`** (Phase 5) — assembles the reviewer-facing
+  deliverable from a findings JSON at `findings/raw/batch-NN.json`.
+  Default output `html,md`: a self-contained **HTML report with one tab
+  per language** (inline CSS/JS, no dependencies — the primary
+  deliverable) plus a Markdown mirror; `--format docx` adds a Word file
+  (needs python-docx). Renders a summary header, a "sample audit — not a
+  complete crawl" scope banner, the Likely errors / Worth checking split,
+  a **Pages checked** list per language (from the `coverage` map), and
+  collapses findings that share an `issue_group` into one card headlined
+  by `issue_title` (else the first finding's diagnosis). Prefixes
+  body-layer findings by `sub_type` (`[DOM-only, not rendered]` /
+  `[Visibility unconfirmed …]`), HTML-escapes excerpts so literal markup
+  shows verbatim, emits "No issues flagged in this batch." for every
+  clean `audited_languages` entry, and prints a footer with author
+  attribution + CC BY 4.0. The deliverable **does not** show verdict
+  state — see Phase 5.5.
 - **`apply_verdicts.py`** (Phase 5.5) — patches the findings JSON
   with native-reviewer verdicts from a verdict CSV (`url`, `field`,
   `excerpt`, `review_status`, optional `review_note`). Sets
@@ -864,8 +1041,9 @@ Required Python packages (mirrors `requirements.txt`):
 - `beautifulsoup4` — HTML parsing for page-content extraction
   (`fetch_pages.py`)
 - `PyYAML` — `config.yml` parsing (all scripts)
-- `python-docx` — `.docx` deliverable assembly (`build_audit_doc.py`
-  only)
+- `python-docx` — **optional**, only for `build_audit_doc.py --format
+  docx`. The default HTML + Markdown deliverables need no third-party
+  packages.
 
 Install with `pip install -r requirements.txt` as part of Phase 1
 setup before running the scripts for the first time. Trusting the
@@ -883,22 +1061,29 @@ rules and check the doc against them. This is a quality gate, not
 overhead — every rule violation that slips through erodes the audit's
 credibility with the translators who act on it. Check in order:
 
-1. **Flag, don't assert.** Every finding in **Likely errors** is one a
-   non-native reviewer can defend without native fluency. Findings
-   about register, idiom, or anglicism are in **Worth checking**, not
-   **Likely errors**.
+1. **Flag, don't assert — and stay terse.** Every finding in **Likely
+   errors** is one a non-native reviewer can defend without native
+   fluency (register, idiom, anglicism go in **Worth checking**).
+   Diagnoses name the anomaly only — no prescribed remedy ("should be
+   X"), no asserted impact, nothing the excerpt already makes obvious.
+   One root issue spanning several elements of the same page+language
+   uses a shared `issue_group` instead of repeating the block.
 2. **Hedge by default.** Every finding in **Worth checking** ends with
    a hedge like "could be deliberate", "worth a translator review",
    or "intentional informality possible".
-3. **Every finding has a URL, field, excerpt, and diagnosis.** No
-   findings without one of the four. The excerpt is the actual text
-   from the page, not a paraphrase.
-4. **Source-vs-target comparison findings include the source-language
-   equivalent.** A content-mismatch finding without the source claim
-   isn't a finding, it's a guess.
-5. **No findings invented.** Every excerpt is verifiable against
+3. **Every finding has a URL, field, and exact excerpt.** A diagnosis
+   is optional (a self-evident excerpt may need none); when present it
+   is terse. The excerpt is the actual text from the page, not a
+   paraphrase.
+4. **Genuine source-vs-target divergences include the source excerpt**
+   — a content mismatch or changed claim without the source is a guess.
+   But don't pad self-evident findings (untranslated string, typo,
+   stray tag) with a redundant, near-identical source line.
+5. **No findings invented.** Every excerpt is a verbatim substring of
    `data/pages-{lang}-batch-N.json`. If a finding can't be traced back
-   to fetched data, it doesn't go in the doc.
+   to fetched data, it doesn't go in the doc. When findings were produced
+   by parallel per-language subagents, this verbatim check has been run
+   centrally over **all** of them and non-matches dropped.
 6. **State is consistent.** After the audit, every URL in the batch
    has been moved from `open.csv` to `audited.csv`. No URL appears in
    two CSVs at once.
@@ -911,14 +1096,17 @@ credibility with the translators who act on it. Check in order:
    collapses `nl-NL` and `nl-BE` (or any other regional pair) onto a
    single base code that points to the wrong host. Run
    `scripts/state.py validate` if in doubt.
-9. **Body epistemic state is recorded.** Every body finding sourced
-   from raw HTML carries the correct `sub_type`:
-   `dom_only_not_rendered` when a hidden container was confirmed, or
-   `visibility_unconfirmed` when raw HTML was used without a rendered
-   cross-check. No body finding is in Likely errors without
+9. **Body epistemic state is recorded — and verified when possible.**
+   Every body finding sourced from raw HTML carries the correct
+   `sub_type`: `dom_only_not_rendered` when a hidden container was
+   confirmed, or `visibility_unconfirmed` when raw HTML was used without
+   a rendered cross-check. A finding may **keep** `visibility_unconfirmed`
+   only when no browser was available; if a browser was available it was
+   resolved via the rendered check (visible → caveat cleared; hidden →
+   `dom_only_not_rendered`). No body finding is in Likely errors without
    confirmed visibility.
 10. **No native-reviewer attribution in the deliverable.** The
-    rendered `.docx` / `.md` shows no "Confirmed by native review"
+    rendered `.html` / `.md` shows no "Confirmed by native review"
     tags, no "Dismissed by native review" subsections, no reviewer
     notes. Verdict state lives in the JSON only and feeds downstream
     artefacts.
@@ -926,6 +1114,13 @@ credibility with the translators who act on it. Check in order:
     every language touched in the batch, so clean languages still
     surface a "No issues flagged in this batch." line in the
     deliverable.
+12. **Coverage is shown.** The `coverage` map is populated for every
+    audited language, so each section renders a "Pages checked" list —
+    a clean language shows what was examined, not a bare "No issues".
+13. **Grouped cards are coherent.** Every `issue_group` card's headline
+    (`issue_title`, else the first diagnosis) is true of **all** its
+    instances; a group bundles only same-theme findings, and mixed-type
+    groups are split into separate cards.
 
 If any check fails, fix it before presenting the doc to the user.
 
@@ -936,7 +1131,7 @@ If any check fails, fix it before presenting the doc to the user.
 | Question | Answer |
 |---|---|
 | Where do new URLs go? | `urls/open.csv`, sorted by priority. |
-| Where do findings go? | `findings/audit-YYYY-MM-DD-batch-N.{docx,md}`. |
+| Where do findings go? | `findings/audit-YYYY-MM-DD-batch-N.html` (primary — tabs per language) + `.md` mirror; `.docx` only with `--format docx`. |
 | When does a URL move from `open` to `audited`? | When the audit doc for its batch is written. |
 | When does a URL move from `audited` to `verified`? | When the agent re-fetches it and confirms the fix is live. |
 | Can a URL move backward? | Yes — `audited` → `open` if a fix introduces a new issue. |
@@ -944,11 +1139,16 @@ If any check fails, fix it before presenting the doc to the user.
 | What counts as a Likely error? | A pattern a non-native reviewer can defend without native fluency. |
 | What counts as Worth checking? | A pattern that could plausibly be a deliberate translator choice. |
 | When in doubt? | Worth checking, with a "could be deliberate" hedge. |
-| What if direct HTTP fetch is blocked? | Use `fetch_pages.py --from-csv` with a Screaming Frog or browser-based export. |
+| How long should a diagnosis be? | As short as possible — name the anomaly only. No "should be X", no asserted impact, nothing the excerpt already shows. Many findings need none. |
+| Same issue across a page's title/meta/H1? | Give them one `issue_group` → renders as a single card, not repeated blocks. (`issue_group` is within-language only.) |
+| Same defect in several languages' equivalent field? | Emit it in **every** affected language tab — repetition across tabs is required, not just allowed. `issue_group` does not propagate across languages. |
+| Auditing many locales at once? | One agent per language reading its cached JSON, then a **mandatory** central check that every excerpt is a verbatim substring of the data (drop non-matches). Cover all page types, not just core pages. |
+| Grouped card with several distinct items? | Give the group an `issue_title` headline true of the whole block; group only same-theme findings and split mixed-type ones into separate cards. |
+| What if direct HTTP fetch is blocked? | Cloudflare JS challenge or rate-limit (403/429) defeats `requests` even with full headers — drive a real browser (navigate once to clear it, then same-origin `fetch()`), or use `fetch_pages.py --from-csv` with a Screaming Frog / browser export. |
 | What if the site has no sitemap? | Fall back to a crawl (Screaming Frog, equivalent) and import the URL list via `--from-csv`. |
 | Which source URL is used for comparison? | Sitemap `<loc>` → `x-default` → bare base code → region-suffixed (Phase 2). |
 | Are source-language URLs in the audit queue? | No — they are comparison references via `canonical_url`, not targets. Opt in explicitly to audit them. |
-| What if the body excerpt isn't visible on the page? | Tag with `sub_type: dom_only_not_rendered` if hidden container confirmed, or `visibility_unconfirmed` if raw HTML used without rendering. Both downgrade to Worth checking with a diagnosis prefix. |
+| What if the body excerpt isn't visible on the page? | If a browser is available, **verify in the rendered page first** (→ visible: no caveat; → hidden: `dom_only_not_rendered`). Keep `visibility_unconfirmed` only when no browser exists at all. |
 | What if the site has no hreflang in the sitemap (per-domain ccTLD setup)? | Run `scripts/build_mapping.py` instead of `fetch_sitemap.py` — it walks source pages and reads on-page hreflang. |
 | What does `nl-NL` vs `nl-BE` mean for the audit? | Target-side regional variants are kept distinct. The home-region heuristic picks `nl-NL` for base `nl`; use `--prefer-region nl=BE` to audit Belgian Dutch instead. |
 | Where do post-review verdicts live? | `review_status` / `review_note` / `reviewer` per finding in the findings JSON. Captured by `apply_verdicts.py` after the native speaker reviews the audit doc. |

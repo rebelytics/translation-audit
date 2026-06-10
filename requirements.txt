@@ -1,4 +1,7 @@
 requests>=2.28.0
 beautifulsoup4>=4.11.0
-python-docx>=0.8.11
 PyYAML>=6.0
+
+# Optional — only for the .docx deliverable (build_audit_doc.py --format docx).
+# The default HTML + Markdown outputs need no third-party packages.
+python-docx>=0.8.11
