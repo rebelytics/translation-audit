@@ -106,6 +106,7 @@ translation-audit/
 │   ├── fetch_sitemap.py        # sitemap → open.csv (hreflang-aware)
 │   ├── build_mapping.py        # fallback for per-ccTLD sites
 │   ├── fetch_pages.py          # URL batch → cached page content
+│   ├── collect_browser_dump.py # OPFS browser→disk bridge (bot-blocked sites)
 │   ├── build_audit_doc.py      # findings JSON → .html + .md (+ docx opt-in)
 │   ├── apply_verdicts.py       # post-review verdict CSV → JSON
 │   └── state.py                # three-list lifecycle bookkeeping
