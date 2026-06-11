@@ -94,6 +94,7 @@ Usage:
 import argparse
 import html
 import json
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -460,12 +461,45 @@ def _esc(text) -> str:
 
 
 def _excerpt_html(text: str, highlight: str = None) -> str:
-    safe = _esc(text)
+    """Escape the excerpt and <mark> the highlight occurrence(s).
+
+    A highlight is a pointer, and a pointer to the wrong place is worse
+    than no pointer: a bare first-substring match lets a short token
+    like "and" mark the inside of a longer word
+    (st<mark>and</mark>ardstørrelser) while the real defect sits
+    unmarked. Prefer word-boundary occurrences; when none exists, mark
+    a single embedded occurrence only if it is unambiguous, else skip
+    marking entirely.
+    """
+    # Strip once up front (matching _esc's whitespace handling), then
+    # escape segments raw — per-segment _esc would eat boundary spaces.
+    text = (text or "").strip()
     h = (highlight or "").strip()
-    if h:
-        safe_h = _esc(h)
-        safe = safe.replace(safe_h, f"<mark>{safe_h}</mark>", 1)
-    return safe
+    if not h or h not in text:
+        return _esc(text)
+
+    def _boundary(start: int, end: int) -> bool:
+        before_ok = (start == 0
+                     or not (text[start - 1].isalnum() and h[0].isalnum()))
+        after_ok = (end >= len(text)
+                    or not (text[end].isalnum() and h[-1].isalnum()))
+        return before_ok and after_ok
+
+    spans = [(m.start(), m.end()) for m in re.finditer(re.escape(h), text)]
+    chosen = [s for s in spans if _boundary(*s)]
+    if not chosen:
+        # No word-boundary occurrence: a single embedded match is taken
+        # as intentional (sub-word defects exist); multiple ambiguous
+        # matches get no mark rather than a wrong mark.
+        chosen = spans if len(spans) == 1 else []
+
+    out, prev = [], 0
+    for start, end in chosen:
+        out.append(html.escape(text[prev:start]))
+        out.append(f"<mark>{html.escape(text[start:end])}</mark>")
+        prev = end
+    out.append(html.escape(text[prev:]))
+    return "".join(out)
 
 
 def build_html(payload: dict) -> str:

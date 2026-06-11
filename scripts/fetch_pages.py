@@ -78,7 +78,14 @@ _INLINE_HIDDEN_PATTERNS = ("display:none", "display: none",
 
 
 def _is_inline_hidden(el) -> bool:
-    """True if the element's inline `style` attribute hides it."""
+    """True if the element's inline `style` attribute hides it.
+
+    bs4 >= 4.13 can surface already-decomposed elements (attrs=None) in
+    a find_all(style=True) scan that runs after earlier decompose()
+    passes; treat those as not-hidden instead of crashing on .get().
+    """
+    if getattr(el, "attrs", None) is None:
+        return False
     style = (el.get("style") or "").lower().replace(" ", "")
     return any(p.replace(" ", "") in style for p in _INLINE_HIDDEN_PATTERNS)
 
@@ -136,8 +143,16 @@ def extract_fields(html: str) -> dict:
     if meta_el and meta_el.get("content"):
         meta_desc = clean_text(meta_el["content"])
 
-    # First <h1>
+    # First <h1>. An H1 is a rendered element: templates hide parts of
+    # it with CSS (e.g. a duplicate artist-name span kept for layout),
+    # so apply the same hidden-container drops inside the h1 subtree
+    # before reading it. CSS-class-driven hiding is still invisible on
+    # this raw path — h1 findings that allege visible-composition
+    # defects (duplicated text, leaked template strings) need the
+    # rendered check before they may ship as Likely errors.
     h1_el = soup.find("h1")
+    if h1_el is not None:
+        drop_non_visible_containers(h1_el)
     h1 = clean_text(h1_el.get_text(" ") if h1_el else "")
 
     # <html lang="...">
