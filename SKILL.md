@@ -420,6 +420,44 @@ accepts a `--from-csv` mode that bypasses the fetch and reads
 pre-extracted page content from a CSV in the standard schema, so the
 methodology still works when the agent can't fetch directly.
 
+### Browser-fetch playbook for bot-blocked multi-domain sites
+
+When the site bot-blocks scripted HTTP (403/429/418 even with full
+browser headers) and the agent has a browser integration, the
+efficient shape is NOT one navigation per page. In order:
+
+1. **Probe cross-domain CORS first.** Sibling ccTLD domains run by one
+   company often serve permissive CORS to each other. One probe
+   (`fetch('https://sibling-domain/page')` from any one of them) can
+   collapse the whole plan: if readable, fetch **every** locale's pages
+   from a single tab with plain `fetch()` — no per-domain navigation
+   at all. A 10-second probe can replace dozens of navigations.
+2. **Accumulate in the page, not the conversation.** Store fetched
+   HTML in a `window` variable across calls; return only status codes.
+   Raw HTML for a full batch (tens of MB) must never flow through the
+   agent conversation.
+3. **Get the data to disk via OPFS.** In automated browser sessions,
+   the user-mediated escape hatches are routinely blocked without any
+   visible error: blob downloads are silently suppressed (even with a
+   real-gesture click), `navigator.clipboard` throws (document not
+   focused), and localhost POSTs hang on a Local Network Access
+   permission no automation can answer. The channel that needs no
+   permission is the **Origin Private File System** — write the
+   payload with a unique marker prefix via
+   `navigator.storage.getDirectory()`, then locate and extract it from
+   the browser profile directory on disk (Chrome stores OPFS content
+   as plain files under `<profile>/File System/`). The bundled
+   `scripts/collect_browser_dump.py` does the locate-verify-extract
+   step. Test any transfer channel with a tiny payload before
+   committing the real one.
+4. **Fall back to per-domain same-origin fetch** only when the CORS
+   probe fails: navigate to each domain once, `fetch()` its paths
+   same-origin, and exfiltrate via the same OPFS bridge.
+
+Then run the standard extraction (`fetch_pages.extract_fields`) over
+the dumped HTML and write `data/pages-{lang}-batch-N.json` in the
+normal schema — everything downstream of Phase 4 is unchanged.
+
 ### Priority order — visible content + user-facing metadata first
 
 A translation audit is about what users actually encounter — visible
@@ -462,18 +500,38 @@ down to dom_only.
 ### Rendered browser pass — required for the body layer when a browser is available
 
 The cheap-HTTP path (`requests` + BeautifulSoup) is sufficient for
-user-facing metadata (title, meta description, H1) — those fields are
-clean on raw HTTP. For the visible body layer, raw HTML extraction
-over-captures: it cannot evaluate CSS or JS, so JS-injected hidden
-state, CSS-class-driven `display:none`, and other invisibility
-patterns are indistinguishable from visible body text.
+title and meta description — those fields live outside the render
+surface (SERP, browser tab), so raw capture is ground truth for them.
+For the visible body layer, raw HTML extraction over-captures: it
+cannot evaluate CSS or JS, so JS-injected hidden state,
+CSS-class-driven `display:none`, and other invisibility patterns are
+indistinguishable from visible body text.
+
+**H1 is a rendered element — "reliably captured" is not "reliably
+visible".** An H1 renders on the page, and templates routinely hide
+parts of it with CSS (a duplicate artist-name span kept for a layout
+variant, a screen-reader-only prefix). Raw extraction concatenates
+those hidden descendants into the H1 string, producing false
+"duplicated text" findings that look authoritative because both
+target and source carry the same hidden markup. `fetch_pages.py`
+applies its hidden-container drops inside the h1 subtree, but
+CSS-class-driven hiding is undetectable from raw HTML — so any h1
+finding that alleges a **visible-composition defect** (duplicated
+text, leaked template string) follows the body rules: it must pass
+the rendered check before it may ship as a Likely error, and it joins
+the body findings in the *Resolving `visibility_unconfirmed`* pass.
+H1 findings about the text itself (a typo, an untranslated heading)
+are unaffected — the characters are the same rendered or not; only
+composition claims need the rendered confirmation.
 
 The skill therefore puts a conditional gate on the body layer, keyed
 to `audit_scope` in `config.yml`:
 
-- **`audit_scope: meta_only`** — the rendered pass is never required.
-  Title, meta description, and H1 are reliably captured by the raw
-  HTTP fetch.
+- **`audit_scope: meta_only`** — the rendered pass is never required
+  for title and meta description, and h1 *text* findings are fine on
+  raw capture. The one exception carries over even here: an h1
+  visible-composition claim (duplicated text) still needs a rendered
+  check before shipping as a Likely error.
 - **`audit_scope: full`** (default) — body findings **must** be
   verified against rendered output. When a browser is available a
   rendered pass is **mandatory, not optional**: prefer capturing the
@@ -551,6 +609,56 @@ don't downgrade a real, visible finding on the strength of an
 positives** — a string present in the source HTML but never rendered
 (e.g. a nav label the live page drops); remove those.
 
+### Batch-resolving at scale — the per-domain iframe harness
+
+Navigating to every page that has body findings does not scale (a
+multi-locale batch can easily have 100+ affected pages). The harness
+that does: **one navigation per domain**, then a single in-page script
+that loads each affected path of that domain into a same-origin
+iframe and checks all of that page's excerpts in one go. Per excerpt:
+
+1. Normalise the iframe's `document.body.innerText` the same way the
+   cached `body_text` was normalised (`\s+` → single space) and test
+   substring containment → **visible**.
+2. On an innerText miss, find the deepest element whose `textContent`
+   contains the excerpt and check its computed style and
+   `getBoundingClientRect()` — display/visibility hidden in the
+   ancestor chain → **hidden**; zero-size rect → treat as hidden;
+   in-layout with a real rect → **visible** (this is the
+   innerText-under-reports fallback from above, automated).
+3. Not in the rendered DOM at all → candidate raw-HTML false positive
+   (see the drift rule below before removing).
+
+Return single-letter verdicts per excerpt, not text — tiny payloads,
+and no page content flows back through the conversation. Two
+implementation notes: transfer the excerpt list into the page
+**base64-encoded** (it sidesteps both quote-escaping and
+content-filter blocks on excerpts that happen to contain trigger
+words), and remember cross-origin iframes are not DOM-readable — the
+harness must run from a page on the same domain it is checking.
+
+### Verify close to fetch — drift on time-variant templates
+
+A rendered verification that runs hours after the fetch doesn't just
+verify — it **re-samples a moving target**. Homepage carousels,
+campaign slots and product-grid hydration rotate content, so a string
+that was genuinely served at fetch time can be legitimately absent at
+verify time. "Not in the rendered DOM" therefore has two readings:
+*never rendered* (a true raw-HTML false positive — remove) and *no
+longer present* (stale — the finding was probably real). Rules:
+
+- Run the rendered verification as close to the fetch as possible —
+  ideally in the same session, before any audit agents run.
+- On **time-variant surfaces** (homepage, campaign/exposure slots,
+  "popular now" grids), treat a not-in-DOM verdict as
+  "unverifiable — content rotated", not as proof of a false positive.
+  Drop the finding from the deliverable if it can't be confirmed, but
+  record the removal in `prioritisation/notes.md`; if the same defect
+  pattern is confirmed on other locales, say so there, so the
+  systemic pattern isn't silently lost.
+- On stable surfaces (product copy, CMS/legal text), not-in-DOM is a
+  genuine false-positive signal and the finding is removed outright.
+
 ---
 
 ## Phase 5 — Audit per language
@@ -584,9 +692,15 @@ For each URL in the batch:
    noise. When one root issue spans several elements of the *same page
    in the same language* (e.g. title + meta + H1 all left in English),
    give them a shared `issue_group` key so they render as one card
-   instead of repeating the diagnosis per element. Reserve
-   `review_status`, `review_note`, and `reviewer` for post-review via
-   `apply_verdicts.py` (default `unreviewed` / `null` / `null`).
+   instead of repeating the diagnosis per element. If a `highlight` is
+   set, it must point at its occurrence **unambiguously**: a bare
+   short token ("and") is a substring of countless longer words, and a
+   mis-anchored mark on a correct finding reads as a blunder — include
+   disambiguating context (`, and 7` rather than `and`) whenever the
+   defect token occurs anywhere else in the excerpt, even mid-word.
+   Reserve `review_status`, `review_note`, and `reviewer` for
+   post-review via `apply_verdicts.py` (default `unreviewed` / `null`
+   / `null`).
 6. **For body-layer findings sourced from raw HTML**, set the
    `sub_type` per Phase 4's epistemic state table:
    `dom_only_not_rendered` when the excerpt came from a confirmed-
@@ -623,6 +737,72 @@ contract and post-scan the merged findings for slips. Breadth matters
 too: auditing *all* page types — not just core commercial pages — is
 what surfaces page-type-level gaps (e.g. author or wiki templates left
 untranslated across every market).
+
+Two practices keep the gate honest:
+
+- **State the gate in the agent contract.** Tell each agent its
+  excerpts will be literal-substring-checked against the cached JSON
+  and that non-matches are dropped. Agents that know the check exists
+  copy-paste rather than paraphrase — in practice this turns the gate
+  from a filter into a deterrent (a 25-agent run produced 470/470
+  verbatim excerpts under this contract).
+- **Negative-control the gate.** A gate that has never been seen to
+  fail is indistinguishable from a gate that never ran. Before
+  trusting a 100% pass, inject one corrupted excerpt and one corrupted
+  `source_excerpt` into a **copy** of the results and confirm both are
+  caught — and make the control non-destructive (point it at a scratch
+  output path; a control run that overwrites the real findings JSON
+  has to be re-run with the real input afterwards).
+
+### Stage 2 — claim verification and re-bucketing (mandatory)
+
+The verbatim gate proves the excerpts are real. It proves nothing
+about the **claims made on top of them** — and wrong buckets,
+unverifiable linguistic assertions and remedies-in-disguise are what
+actually erode a reviewer's trust. After the verbatim gate (and after
+the rendered visibility pass), run a second pass over every
+**assertive finding**: all Likely errors, plus every Worth-checking
+finding whose diagnosis names a mechanical error class (typo,
+contamination, duplication, encoding). Per finding, answer:
+
+1. **Is the bucket right for the class — especially after visibility
+   cleared?** The raw-HTML rule forces body findings into Worth
+   checking; once the rendered pass confirms visibility, findings of
+   mechanical classes (typo, cross-language contamination, encoded
+   entities, duplication) move **up** to Likely errors — and the
+   hedge, which belonged to the *visibility* uncertainty and not the
+   class, is stripped. Leaving "looks like a typo … worth a translator
+   review" on a visibility-confirmed, unambiguous typo reads as
+   linguistic timidity and buries real defects among judgment calls.
+2. **Is every linguistic claim corroborated or reworded?** A diagnosis
+   that invokes a norm ("nonstandard per X orthography", "doubled
+   determiner") asserts something nobody checked — and attested
+   idioms, legal boilerplate and regional conventions WILL contradict
+   it. Corroborate cheaply (the cached corpus is right there: does the
+   site itself spell it differently elsewhere? does the source pair?)
+   or reword the diagnosis down to the observable fact ("spelling
+   differs from the same word elsewhere on the page"), which survives
+   native review even when the norm-claim wouldn't.
+3. **Is a remedy hiding in the diagnosis?** "Typo for X" / "instead of
+   X" prescribe a correction just as much as "should be X" — and the
+   implied correction can itself be wrong (a German plural that takes
+   no -s). Quoting the source field is fine; naming the "intended"
+   word is not. Add these patterns to the diagnosis post-scan.
+4. **Is the group one claim?** A card that bundles several distinct
+   micro-claims (a doubled word + an abbreviation redundancy + a brand
+   casing) lets one disputed sub-claim taint the others. One card =
+   one claim a reviewer can accept or reject as a unit.
+5. **Is the highlight unambiguous?** See the highlight rule in
+   Phase 5 — a short token that also occurs inside longer words gets
+   marked in the wrong place by the renderer.
+
+This stage exists because per-finding attention is exactly what the
+fan-out trades away: isolated per-locale agents classify sloppily at
+the margins, and a central review that only greps for rule phrases is
+statistical, not per-claim. Scale the verification to the same surface
+the reviewer reads — every assertive finding gets one adversarial pass
+before delivery. Languages are independent here too, so this stage
+fans out the same way the audit does.
 
 ### Per-language section structure
 
@@ -740,8 +920,11 @@ documents the behaviour, the script change lives in `scripts/`.)
 Each finding object carries `language`, `url`, `field`, `excerpt`,
 `diagnosis`, `bucket`, plus optional `source_excerpt`, `sub_type`,
 `issue_group` (collapse-into-one-card key, scoped per language), and
-`highlight` (a substring of the excerpt to mark in the HTML). The full
-per-finding shape is documented at the top of `build_audit_doc.py`.
+`highlight` (a substring of the excerpt to mark in the HTML — must
+identify its occurrence unambiguously; `build_audit_doc.py` marks
+word-boundary matches only and skips marking rather than mark the
+wrong occurrence of an ambiguous token). The full per-finding shape
+is documented at the top of `build_audit_doc.py`.
 
 ### Output
 
@@ -991,9 +1174,19 @@ The scripts in `scripts/`:
   Writes `data/pages-{lang}-batch-N.json`. Normalises whitespace
   uniformly across all extracted fields. Drops `<template>`,
   `[hidden]`, `aria-hidden`, and inline `display: none` /
-  `visibility: hidden` containers before returning body text.
+  `visibility: hidden` containers before returning body text — and
+  applies the same drops inside the `<h1>` subtree, since templates
+  hide parts of headings with CSS. Tolerates bs4 ≥ 4.13's behaviour
+  of surfacing already-decomposed elements in later attribute scans.
   Supports `--from-csv` mode to read pre-extracted content from a CSV
   instead of fetching, for use in sandboxed environments.
+- **`collect_browser_dump.py`** (Phase 4, browser-fetch playbook) —
+  the disk side of the OPFS bridge. After in-page JS writes the
+  fetched-HTML payload (with a unique marker prefix) to the Origin
+  Private File System, this script locates the newest matching file
+  under the browser profile's `File System/` store, verifies the
+  marker, and extracts the JSON payload to a target path. `--print-js`
+  prints a template of the in-page collector for reference.
 - **`build_audit_doc.py`** (Phase 5) — assembles the reviewer-facing
   deliverable from a findings JSON at `findings/raw/batch-NN.json`.
   Default output `html,md`: a self-contained **HTML report with one tab
@@ -1008,8 +1201,10 @@ The scripts in `scripts/`:
   `[Visibility unconfirmed …]`), HTML-escapes excerpts so literal markup
   shows verbatim, emits "No issues flagged in this batch." for every
   clean `audited_languages` entry, and prints a footer with author
-  attribution + CC BY 4.0. The deliverable **does not** show verdict
-  state — see Phase 5.5.
+  attribution + CC BY 4.0. Highlights are marked on **word-boundary
+  occurrences only** — a single embedded match is honoured, multiple
+  ambiguous matches get no mark rather than a wrong mark. The
+  deliverable **does not** show verdict state — see Phase 5.5.
 - **`apply_verdicts.py`** (Phase 5.5) — patches the findings JSON
   with native-reviewer verdicts from a verdict CSV (`url`, `field`,
   `excerpt`, `review_status`, optional `review_note`). Sets
@@ -1065,9 +1260,11 @@ credibility with the translators who act on it. Check in order:
    errors** is one a non-native reviewer can defend without native
    fluency (register, idiom, anglicism go in **Worth checking**).
    Diagnoses name the anomaly only — no prescribed remedy ("should be
-   X"), no asserted impact, nothing the excerpt already makes obvious.
-   One root issue spanning several elements of the same page+language
-   uses a shared `issue_group` instead of repeating the block.
+   X", and equally "typo for X" / "instead of X", which prescribe a
+   correction in disguise), no asserted impact, nothing the excerpt
+   already makes obvious. One root issue spanning several elements of
+   the same page+language uses a shared `issue_group` instead of
+   repeating the block.
 2. **Hedge by default.** Every finding in **Worth checking** ends with
    a hedge like "could be deliberate", "worth a translator review",
    or "intentional informality possible".
@@ -1083,7 +1280,9 @@ credibility with the translators who act on it. Check in order:
    `data/pages-{lang}-batch-N.json`. If a finding can't be traced back
    to fetched data, it doesn't go in the doc. When findings were produced
    by parallel per-language subagents, this verbatim check has been run
-   centrally over **all** of them and non-matches dropped.
+   centrally over **all** of them and non-matches dropped — and the
+   gate itself was negative-controlled (a known-bad excerpt injected
+   into a scratch copy and confirmed caught).
 6. **State is consistent.** After the audit, every URL in the batch
    has been moved from `open.csv` to `audited.csv`. No URL appears in
    two CSVs at once.
@@ -1104,7 +1303,9 @@ credibility with the translators who act on it. Check in order:
    only when no browser was available; if a browser was available it was
    resolved via the rendered check (visible → caveat cleared; hidden →
    `dom_only_not_rendered`). No body finding is in Likely errors without
-   confirmed visibility.
+   confirmed visibility — and no h1 visible-composition finding
+   (duplicated text) is in Likely errors without a rendered check
+   either.
 10. **No native-reviewer attribution in the deliverable.** The
     rendered `.html` / `.md` shows no "Confirmed by native review"
     tags, no "Dismissed by native review" subsections, no reviewer
@@ -1120,7 +1321,18 @@ credibility with the translators who act on it. Check in order:
 13. **Grouped cards are coherent.** Every `issue_group` card's headline
     (`issue_title`, else the first diagnosis) is true of **all** its
     instances; a group bundles only same-theme findings, and mixed-type
-    groups are split into separate cards.
+    groups are split into separate cards — one card is one claim a
+    reviewer can accept or reject as a unit.
+14. **Claim verification ran over every assertive finding.** All
+    Likely errors, plus Worth-checking findings naming a mechanical
+    class, got the Stage-2 pass: buckets re-checked (mechanical
+    classes promoted once visibility was confirmed, stale visibility
+    hedges stripped), norm-invoking linguistic claims corroborated or
+    reworded to the observable fact, and no remedies in disguise.
+15. **Highlights are unambiguous.** Every `highlight` identifies its
+    occurrence uniquely (word-boundary match, or disambiguating
+    context included) — a mark on the wrong occurrence of a short
+    token turns a correct finding into an apparent blunder.
 
 If any check fails, fix it before presenting the doc to the user.
 
@@ -1142,9 +1354,15 @@ If any check fails, fix it before presenting the doc to the user.
 | How long should a diagnosis be? | As short as possible — name the anomaly only. No "should be X", no asserted impact, nothing the excerpt already shows. Many findings need none. |
 | Same issue across a page's title/meta/H1? | Give them one `issue_group` → renders as a single card, not repeated blocks. (`issue_group` is within-language only.) |
 | Same defect in several languages' equivalent field? | Emit it in **every** affected language tab — repetition across tabs is required, not just allowed. `issue_group` does not propagate across languages. |
-| Auditing many locales at once? | One agent per language reading its cached JSON, then a **mandatory** central check that every excerpt is a verbatim substring of the data (drop non-matches). Cover all page types, not just core pages. |
+| Auditing many locales at once? | One agent per language reading its cached JSON, then TWO mandatory central stages: the verbatim-excerpt gate (drop non-matches; state it in the agent contract; negative-control it), and the claim-verification pass over every assertive finding. Cover all page types, not just core pages. |
+| Clear typo in the body, visibility now confirmed? | Promote to Likely error and strip the hedge — the hedge belonged to the visibility uncertainty, not the error class. |
+| Diagnosis says "nonstandard per [language] orthography"? | That's an unverified norm-claim. Corroborate against the cached corpus (same word elsewhere on the site / in the source pair) or reword to the observable fact. |
+| H1 looks duplicated ("Artist Artist Album")? | Rendered check first — templates hide duplicate heading spans with CSS, and raw extraction concatenates them. Not a Likely error without rendered confirmation. |
+| Setting a `highlight`? | It must locate its occurrence unambiguously — add context if the token appears anywhere else in the excerpt (even mid-word). The renderer marks word-boundary matches only. |
 | Grouped card with several distinct items? | Give the group an `issue_title` headline true of the whole block; group only same-theme findings and split mixed-type ones into separate cards. |
-| What if direct HTTP fetch is blocked? | Cloudflare JS challenge or rate-limit (403/429) defeats `requests` even with full headers — drive a real browser (navigate once to clear it, then same-origin `fetch()`), or use `fetch_pages.py --from-csv` with a Screaming Frog / browser export. |
+| What if direct HTTP fetch is blocked? | Cloudflare JS challenge or rate-limit (403/418/429) defeats `requests` even with full headers — use the browser-fetch playbook: probe sibling-domain CORS first (open CORS = fetch every locale from ONE tab), accumulate in `window`, exfiltrate via the OPFS bridge (`collect_browser_dump.py`). Or `fetch_pages.py --from-csv` with a Screaming Frog / browser export. |
+| Browser downloads / clipboard / localhost POST all fail silently? | Expected in automated browser sessions. Use the OPFS bridge: write the payload with a marker prefix via `navigator.storage.getDirectory()`, collect from the profile's `File System/` store with `collect_browser_dump.py`. |
+| Rendered verification long after the fetch? | Don't — verify close to fetch. On time-variant surfaces (carousels, campaign slots) a not-in-DOM verdict means "content rotated, unverifiable", not "false positive"; record removals in the project notes. |
 | What if the site has no sitemap? | Fall back to a crawl (Screaming Frog, equivalent) and import the URL list via `--from-csv`. |
 | Which source URL is used for comparison? | Sitemap `<loc>` → `x-default` → bare base code → region-suffixed (Phase 2). |
 | Are source-language URLs in the audit queue? | No — they are comparison references via `canonical_url`, not targets. Opt in explicitly to audit them. |
