@@ -637,6 +637,46 @@ content-filter blocks on excerpts that happen to contain trigger
 words), and remember cross-origin iframes are not DOM-readable — the
 harness must run from a page on the same domain it is checking.
 
+### Rendered capture is per-element — `innerText` falls back on unrendered elements
+
+"Rendered capture" is only rendered if the **element** is rendered.
+Per spec, `innerText` on an element that is not being rendered
+silently falls back to `textContent` — it answers a different
+question exactly when the element isn't in layout, which is exactly
+when you were relying on it to filter hidden descendants. The classic
+trap is a responsive template whose only `<h1>` is the mobile
+variant: `display:none` at a desktop capture viewport, so
+`h1.innerText` returns the full `textContent` — including CSS-hidden
+descendants such as an artist or brand name duplicated in a product
+H1 for a layout variant — and every element in the subtree reports a
+0×0 rect. No wait time fixes this; it is a viewport property, not a
+timing one.
+
+Capture logic for heading fields on responsive sites:
+
+1. **Check the element's bounding rect before trusting `innerText`.**
+   A zero-size `getBoundingClientRect()` means the "rendered" read is
+   `textContent` in disguise.
+2. **Prefer the first `<h1>` with a non-zero rect** — the rendered
+   desktop variant, when one exists.
+3. **When no `<h1>` is rendered at the capture viewport** (a
+   mobile-only h1 at a desktop viewport), take the first `<h1>` and
+   compute its visible composition manually: walk its descendants and
+   drop any with computed `display:none` / `visibility:hidden`,
+   **skipping the check on the root itself** — the root's hiding is
+   viewport-conditional, but its hidden descendants are hidden at
+   every viewport.
+4. **Record the capture viewport in the cached data** (e.g. an
+   `h1_capture` note alongside the field in
+   `data/pages-{lang}-batch-N.json`) so findings on responsive
+   variants stay interpretable later.
+
+The same rect-check applies inside the iframe harness above: harness
+step 2 already covers `innerText` *misses* on visible content; this
+rule covers the inverse failure, where `innerText` *hits* on text
+that is never visible because the element it was read from isn't
+rendered at the capture viewport.
+
 ### Verify close to fetch — drift on time-variant templates
 
 A rendered verification that runs hours after the fetch doesn't just
@@ -783,6 +823,21 @@ contamination, duplication, encoding). Per finding, answer:
    or reword the diagnosis down to the observable fact ("spelling
    differs from the same word elsewhere on the page"), which survives
    native review even when the norm-claim wouldn't.
+
+   **The skepticism has a floor — impossible morphology is
+   assertable.** Corroborate-or-reword applies to claims about *usage
+   and convention*. A morphologically impossible inflection of a
+   common word — an impossible form, not an unusual choice — is
+   defensible without in-page corroboration and stays in Likely
+   errors. Worked contrast: a doubled determiner construction is
+   unusual but could be attested legal boilerplate or idiom → defer
+   to Worth checking unless corroborated; a malformed superlative of
+   a common adjective (a form the language simply does not have, where
+   only one well-formed superlative exists) has no attested reading
+   at all → keep in Likely errors even when the page offers no
+   corroborating counterpart. Over-applied skepticism relabels certain
+   knowledge as doubt, which costs credibility the same way
+   overclaiming does — just in the opposite direction.
 3. **Is a remedy hiding in the diagnosis?** "Typo for X" / "instead of
    X" prescribe a correction just as much as "should be X" — and the
    implied correction can itself be wrong (a German plural that takes
@@ -1305,7 +1360,10 @@ credibility with the translators who act on it. Check in order:
    `dom_only_not_rendered`). No body finding is in Likely errors without
    confirmed visibility — and no h1 visible-composition finding
    (duplicated text) is in Likely errors without a rendered check
-   either.
+   either. Any rendered h1 read confirmed the element itself was in
+   layout (non-zero rect) before trusting `innerText`, applying the
+   rendered-preferred / filtered-mobile-fallback logic on responsive
+   sites, and the capture viewport is recorded in the cached data.
 10. **No native-reviewer attribution in the deliverable.** The
     rendered `.html` / `.md` shows no "Confirmed by native review"
     tags, no "Dismissed by native review" subsections, no reviewer
@@ -1328,7 +1386,9 @@ credibility with the translators who act on it. Check in order:
     class, got the Stage-2 pass: buckets re-checked (mechanical
     classes promoted once visibility was confirmed, stale visibility
     hedges stripped), norm-invoking linguistic claims corroborated or
-    reworded to the observable fact, and no remedies in disguise.
+    reworded to the observable fact — with the impossible-morphology
+    floor respected (a malformed inflection of a common word stays in
+    Likely errors even uncorroborated) — and no remedies in disguise.
 15. **Highlights are unambiguous.** Every `highlight` identifies its
     occurrence uniquely (word-boundary match, or disambiguating
     context included) — a mark on the wrong occurrence of a short
@@ -1357,7 +1417,9 @@ If any check fails, fix it before presenting the doc to the user.
 | Auditing many locales at once? | One agent per language reading its cached JSON, then TWO mandatory central stages: the verbatim-excerpt gate (drop non-matches; state it in the agent contract; negative-control it), and the claim-verification pass over every assertive finding. Cover all page types, not just core pages. |
 | Clear typo in the body, visibility now confirmed? | Promote to Likely error and strip the hedge — the hedge belonged to the visibility uncertainty, not the error class. |
 | Diagnosis says "nonstandard per [language] orthography"? | That's an unverified norm-claim. Corroborate against the cached corpus (same word elsewhere on the site / in the source pair) or reword to the observable fact. |
+| Morphologically impossible inflection of a common word, no in-page corroboration? | Assertable — an impossible form is not a usage claim. Keep in Likely errors. Corroborate-or-reword applies to convention claims, not malformed morphology. |
 | H1 looks duplicated ("Artist Artist Album")? | Rendered check first — templates hide duplicate heading spans with CSS, and raw extraction concatenates them. Not a Likely error without rendered confirmation. |
+| Rendered h1 capture still includes a hidden duplicate? | Check the element's rect — `innerText` falls back to `textContent` on unrendered elements (e.g. a mobile-only h1 at a desktop capture viewport). Prefer the first h1 with a non-zero rect; if none, filter the first h1's hidden descendants manually (skip the rect check on the root) and record the capture viewport. |
 | Setting a `highlight`? | It must locate its occurrence unambiguously — add context if the token appears anywhere else in the excerpt (even mid-word). The renderer marks word-boundary matches only. |
 | Grouped card with several distinct items? | Give the group an `issue_title` headline true of the whole block; group only same-theme findings and split mixed-type ones into separate cards. |
 | What if direct HTTP fetch is blocked? | Cloudflare JS challenge or rate-limit (403/418/429) defeats `requests` even with full headers — use the browser-fetch playbook: probe sibling-domain CORS first (open CORS = fetch every locale from ONE tab), accumulate in `window`, exfiltrate via the OPFS bridge (`collect_browser_dump.py`). Or `fetch_pages.py --from-csv` with a Screaming Frog / browser export. |
