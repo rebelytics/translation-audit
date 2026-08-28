@@ -1124,6 +1124,21 @@ When the client confirms that fixes for an audit batch have been
 deployed, the agent verifies them and moves URLs from `audited.csv` to
 `verified.csv`.
 
+**Establish the deployment date before verifying.** The client's
+confirmation usually arrives as a ticket comment or an email, and that
+message dates the report, not the change — reporting lags doing, and a
+"done" comment is systematically later than the deployment it
+describes. Before classifying anything as **Not fixed**, pin the
+deployment date from evidence: a deploy log or release note, or the
+earliest message demonstrating a corrected page live — not the latest
+message declaring completion. If the date cannot be pinned, record the
+range in `prioritisation/notes.md`. A verification fetch is live, so a
+fix confirmed live is trustworthy regardless — but a **Not fixed**
+verdict is only meaningful if the fetch postdates the deployment. When
+in doubt, treat "Not fixed" as provisional and re-check once the date
+is established, rather than incrementing `verify_attempts` against a
+fix that had not yet shipped.
+
 For each URL in the verification set:
 
 1. Re-fetch the live page (same script as Phase 4).
