@@ -83,6 +83,15 @@ as body text. See USER-GUIDE.md for setup and fallback.
 default HTML + Markdown deliverables need no third-party packages. See
 `requirements.txt`.
 
+## Companion skill
+
+The verification phase applies shared rules — the deployment gate and the
+emitter classification that decides whether a sample is valid — owned by
+the published companion skill
+[redirect-verification](https://github.com/rebelytics/redirect-verification).
+Install it alongside translation-audit; this skill points to it rather than
+carrying its own copy.
+
 ## Quick start
 
 1. Clone this repo into your workspace folder (or wherever your agent
@@ -127,12 +136,12 @@ Early release. Bug reports, feature requests, new error-class
 examples, and platform compatibility reports all welcome via Issues
 and PRs.
 
+## Credits
+
+- Original author: [Eoghan Henn](https://www.rebelytics.com) / [LinkedIn](https://www.linkedin.com/in/eoghanhenn)
+
 ## License
 
-[Creative Commons Attribution 4.0 International (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/).
-You're free to use, adapt, and redistribute — including commercially —
-with appropriate credit.
+CC BY 4.0 — the licence text is in [LICENSE](./LICENSE): the full legal code, unmodified, as Creative Commons publishes it; the [human-readable summary](https://creativecommons.org/licenses/by/4.0/) says what it allows. Use it, fork it, adapt it, monetise it. Keep the attribution.
 
----
-
-**Created by [Eoghan Henn](https://rebelytics.com)**
+Copyright (c) 2026 Eoghan Henn / rebelytics.com
