@@ -4,6 +4,8 @@
 websites at scale — without needing a native speaker of every language at
 your desk.**
 
+Part of the [Open Skill Library](https://github.com/rebelytics/one-skill-to-rule-them-all/blob/main/OPEN-SKILL-LIBRARY.md), the open-source agent skills maintained with Task Observer.
+
 Translation quality on large multilingual sites tends to drift quietly.
 Strings get re-translated by AI, content gets ported between platforms,
 language teams shrink, and nobody is watching every version at once.
