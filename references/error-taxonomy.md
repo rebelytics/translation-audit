@@ -17,6 +17,8 @@ The taxonomy is organised into two top-level buckets: **Likely errors**
 (things that need a native judgment call). Within each bucket, classes
 are ordered roughly by how often they show up in practice.
 
+Load triggers: before the first audit on a new project; classifying a finding's error class or bucket
+
 ---
 
 ## Likely errors

@@ -1,11 +1,12 @@
 ---
 name: translation-audit
-version: 1.4.0
 description: "End-to-end methodology for auditing translation quality on multilingual websites — meta titles, H1s, meta descriptions, and full body content across all language versions. Includes URL discovery from XML sitemaps, user-driven prioritisation (GSC, GA4, internal weights), batched workflow, three-list state management (open → audited → verified), and a structured error taxonomy that lets non-native reviewers flag issues without overclaiming. Load this skill whenever the user mentions translation audit, translation review, localisation audit, L10n review, multilingual content quality, \"translation issues on our site\", \"review the German/French/Spanish version\", or wants to set up or extend a structured translation review project. Also load when continuing an in-progress audit (URLs to fetch, batches to process, fixes to verify)."
 license: CC-BY-4.0
 metadata:
   author: Eoghan Henn and contributors
   source: https://github.com/rebelytics/translation-audit
+  version: "1.5.0"
+  core_max_lines: "861"
 ---
 
 # Translation Audit — methodology and workflow
@@ -167,7 +168,7 @@ The split between `findings/raw/batch-NN.json` and the rendered
 `audit-*.html` / `.md` is deliberate: the JSON is the data store and
 carries the post-review `review_status` state once that's captured;
 the `.html` / `.md` are reviewer-facing renders that deliberately
-omit verdict state (see Phase 5). The `.html` is the primary
+omit verdict state (see Phase 5, Output: `references/audit-doc-output.md`). The `.html` is the primary
 deliverable — a self-contained, zero-dependency report with one tab
 per language (prints cleanly to PDF for a client hand-off). The
 `.docx` is opt-in for clients who require Word.
@@ -194,6 +195,29 @@ deciding what phase to run.
                                                           │
                                                           └─→ (loop back to 4 for next batch)
 ```
+
+---
+
+## Reference files
+
+Episodic sections live in `references/`. Load each file when its trigger
+fires: an episode run from this core alone skips the rules the file holds.
+Every moved section keeps its heading here with a stub that states its
+never/always rule and names its file. If an episode ran before its file was
+loaded, load it and re-check that work before delivery.
+
+| load when | file | holds |
+|---|---|---|
+| before the first audit on a new project | `references/error-taxonomy.md` | every error class in full |
+| before Phase 2 writes `open.csv`; choosing a source URL or regional variant | `references/discovery-variants.md` | Phase 2: source pairing, regional variants, source language not enqueued |
+| scripted HTTP is bot-blocked and a browser is available | `references/browser-fetch.md` | Phase 4: the browser-fetch playbook |
+| before the body layer; an h1 composition claim; resolving `visibility_unconfirmed` | `references/rendered-verification.md` | Phase 4: the rendered pass through drift |
+| before dispatching per-language agents or a cross-market overview | `references/scaling-across-locales.md` | Phase 5: scaling across locales |
+| before building an audit doc with assertive findings | `references/claim-verification.md` | Phase 5: Stage 2 |
+| before writing the findings JSON or rendering the deliverable | `references/audit-doc-output.md` | Phase 5: per-language structure, findings JSON, output |
+| native-reviewer verdicts arrive | `references/post-review-triage.md` | Phase 5.5 in full |
+| the client reports fixes deployed | `references/verify-fixes.md` | Phase 6 in full |
+| choosing a script, first run in a project, a missing-module error | `references/bundled-scripts.md` | Bundled scripts and Dependencies |
 
 ---
 
@@ -243,7 +267,7 @@ change.
 ## Phase 2 — Discover URLs from sitemap
 
 Fetch the sitemap(s) and populate `open.csv`. Use the bundled script
-`scripts/fetch_sitemap.py` (see Bundled scripts below). The script
+`scripts/fetch_sitemap.py` (see `references/bundled-scripts.md`). The script
 handles the three common sitemap shapes:
 
 - **Single sitemap** with all URLs (often used by smaller sites).
@@ -269,62 +293,19 @@ otherwise interchangeable downstream of Phase 2.
 
 ### Source-language regional variants — pick a canonical source
 
-Many sites expose multiple regional variants of the source language
-(e.g., `en`, `en-GB`, `en-US`). A naive "normalise locale codes and
-last-wins" strategy silently picks an arbitrary regional variant
-(often `en-US`) as the source-of-truth URL for comparison — even when
-the international `en` / `x-default` page is what should be compared
-against.
-
-**Pairing rule for source-language alternates.** When multiple
-hreflang alternates normalise to the same base source-language code,
-the canonical source URL is chosen in this priority order:
-
-1. The sitemap `<loc>` value, when it matches the source language.
-2. The `x-default` alternate, when present.
-3. The bare base code (e.g., `en`) without a region suffix.
-4. Last resort: a region-suffixed variant, with the choice logged in
-   `prioritisation/notes.md` so the user can override.
-
-This applies to the URL stored in `canonical_url` on every non-source
-row in `open.csv`, and to any URL fetched as the comparison source in
-Phase 4.
+When several alternates normalise to the source language, `canonical_url`
+is chosen sitemap `<loc>` → `x-default` → bare base code → region-suffixed
+(logged). Load `references/discovery-variants.md` before Phase 2 writes `open.csv`.
 
 ### Target-side regional variants — keep distinct
 
-The source-pairing rule above is safe for picking one source-of-truth
-URL. The same normalisation is **unsafe** on the target side, where
-regional variants resolve to different audit subjects. If a site
-exposes `nl-NL` (`.nl`) and `nl-BE` (`.be`) as separate market sites,
-collapsing both to base `nl` silently picks one and drops the other —
-half the audit goes missing.
-
-Both `fetch_sitemap.py` and `build_mapping.py` keep regional variants
-distinct in `data/url-mapping.json` by storing the full hreflang code
-(`nl-NL`, `nl-BE`) as the mapping key. When the audit queue needs one
-URL per base language, the home-region heuristic picks the variant
-whose region matches the base code (`nl` → `nl-NL`, `fr` → `fr-FR`),
-and the choice is reported on stderr so nothing is picked silently.
-The `--prefer-region` flag overrides per code (e.g. `nl=BE` to audit
-the Belgian Dutch site instead). To audit both regional variants of a
-target language, run two passes with different `--prefer-region`
-choices into sibling project folders, or extend the target-list to
-include the full locale codes.
+Never collapse target regional variants (`nl-NL`, `nl-BE`) onto one base
+code; the heuristic and `--prefer-region` are in `references/discovery-variants.md`.
 
 ### Do not enqueue the source language as audit targets
 
-Source-language URLs are comparison references, held via
-`canonical_url` / `url-mapping.json` — they are **not** audit targets
-themselves. `fetch_sitemap.py` should not produce `open.csv` rows for
-the source language by default; doing so doubles the queue with
-non-target pages that have no source pair (e.g., 6,788 `en` rows next
-to 6,788 `de` rows on a multilingual site where English is the
-source).
-
-If the user genuinely wants to audit the source language for
-self-consistency (typos, broken links), they can opt in explicitly
-via a config flag — but the default behaviour is to keep source-
-language URLs in the mapping only, not in the audit queue.
+Source-language URLs stay in the mapping as comparison references, not in
+`open.csv`, unless the user opts in (`references/discovery-variants.md`).
 
 ### `open.csv` schema
 
@@ -400,11 +381,12 @@ template's boilerplate) are the samplable class, which is why
    sweep of that one pattern over the sitemap-enumerated population
    (a substring test per page, not an audit; roughly 1,500 pages
    fetch in under a minute from a same-origin tab, see the
-   browser-fetch playbook) and report per-locale counts.
+   browser-fetch playbook in `references/browser-fetch.md`) and report per-locale counts.
 2. **Each language version is read in its own right.** Translations of
    one document are independent artefacts (shared rule above), so the
    batch never infers a translation's state from its source or from a
-   sibling, and the cross-language propagation check in Phase 5 (emit
+   sibling, and the cross-language propagation check in Phase 5
+   (`references/audit-doc-output.md`, Per-language section structure: emit
    the defect in every affected tab) is a check that reads the sibling
    fields, not an assumption that they match.
 
@@ -450,41 +432,9 @@ methodology still works when the agent can't fetch directly.
 
 ### Browser-fetch playbook for bot-blocked multi-domain sites
 
-When the site bot-blocks scripted HTTP (403/429/418 even with full
-browser headers) and the agent has a browser integration, the
-efficient shape is NOT one navigation per page. In order:
-
-1. **Probe cross-domain CORS first.** Sibling ccTLD domains run by one
-   company often serve permissive CORS to each other. One probe
-   (`fetch('https://sibling-domain/page')` from any one of them) can
-   collapse the whole plan: if readable, fetch **every** locale's pages
-   from a single tab with plain `fetch()` — no per-domain navigation
-   at all. A 10-second probe can replace dozens of navigations.
-2. **Accumulate in the page, not the conversation.** Store fetched
-   HTML in a `window` variable across calls; return only status codes.
-   Raw HTML for a full batch (tens of MB) must never flow through the
-   agent conversation.
-3. **Get the data to disk via OPFS.** In automated browser sessions,
-   the user-mediated escape hatches are routinely blocked without any
-   visible error: blob downloads are silently suppressed (even with a
-   real-gesture click), `navigator.clipboard` throws (document not
-   focused), and localhost POSTs hang on a Local Network Access
-   permission no automation can answer. The channel that needs no
-   permission is the **Origin Private File System** — write the
-   payload with a unique marker prefix via
-   `navigator.storage.getDirectory()`, then locate and extract it from
-   the browser profile directory on disk (Chrome stores OPFS content
-   as plain files under `<profile>/File System/`). The bundled
-   `scripts/collect_browser_dump.py` does the locate-verify-extract
-   step. Test any transfer channel with a tiny payload before
-   committing the real one.
-4. **Fall back to per-domain same-origin fetch** only when the CORS
-   probe fails: navigate to each domain once, `fetch()` its paths
-   same-origin, and exfiltrate via the same OPFS bridge.
-
-Then run the standard extraction (`fetch_pages.extract_fields`) over
-the dumped HTML and write `data/pages-{lang}-batch-N.json` in the
-normal schema — everything downstream of Phase 4 is unchanged.
+When scripted HTTP is bot-blocked and a browser integration exists, load
+`references/browser-fetch.md` before the first navigation: CORS probe first,
+never one navigation per page, no raw HTML through the conversation.
 
 ### Priority order — visible content + user-facing metadata first
 
@@ -522,210 +472,39 @@ the diagnosis is rendered in the audit doc:
 The skill must not collapse `visibility_unconfirmed` and
 `dom_only_not_rendered` into one state. "I couldn't determine" is
 distinct from "I confirmed it's hidden", and the rendered pass
-(below) is what resolves the unconfirmed case up to Likely error or
+(`references/rendered-verification.md`) is what resolves the unconfirmed case up to Likely error or
 down to dom_only.
 
 ### Rendered browser pass — required for the body layer when a browser is available
 
-The cheap-HTTP path (`requests` + BeautifulSoup) is sufficient for
-title and meta description — those fields live outside the render
-surface (SERP, browser tab), so raw capture is ground truth for them.
-For the visible body layer, raw HTML extraction over-captures: it
-cannot evaluate CSS or JS, so JS-injected hidden state,
-CSS-class-driven `display:none`, and other invisibility patterns are
-indistinguishable from visible body text.
-
-**H1 is a rendered element — "reliably captured" is not "reliably
-visible".** An H1 renders on the page, and templates routinely hide
-parts of it with CSS (a duplicate artist-name span kept for a layout
-variant, a screen-reader-only prefix). Raw extraction concatenates
-those hidden descendants into the H1 string, producing false
-"duplicated text" findings that look authoritative because both
-target and source carry the same hidden markup. `fetch_pages.py`
-applies its hidden-container drops inside the h1 subtree, but
-CSS-class-driven hiding is undetectable from raw HTML — so any h1
-finding that alleges a **visible-composition defect** (duplicated
-text, leaked template string) follows the body rules: it must pass
-the rendered check before it may ship as a Likely error, and it joins
-the body findings in the *Resolving `visibility_unconfirmed`* pass.
-H1 findings about the text itself (a typo, an untranslated heading)
-are unaffected — the characters are the same rendered or not; only
-composition claims need the rendered confirmation.
-
-The skill therefore puts a conditional gate on the body layer, keyed
-to `audit_scope` in `config.yml`:
-
-- **`audit_scope: meta_only`** — the rendered pass is never required
-  for title and meta description, and h1 *text* findings are fine on
-  raw capture. The one exception carries over even here: an h1
-  visible-composition claim (duplicated text) still needs a rendered
-  check before shipping as a Likely error.
-- **`audit_scope: full`** (default) — body findings **must** be
-  verified against rendered output. When a browser is available a
-  rendered pass is **mandatory, not optional**: prefer capturing the
-  body from the rendered DOM at fetch time (e.g. Claude in Chrome
-  `get_page_text`, or an iframe's `innerText`) so body findings are
-  confirmed-visible by construction; otherwise, if the body was first
-  taken from a raw fetch, run the rendered verification in *Resolving
-  `visibility_unconfirmed`* (below) before delivery. Shipping a body
-  finding with the `visibility_unconfirmed` caveat is a **last resort,
-  only when no browser exists at all** — then tag every such finding
-  and note in `prioritisation/notes.md` that the body ran un-rendered.
-
-A `require_rendered_body: true` flag in `config.yml` turns the soft
-gate into a hard stop — projects that want to refuse body findings
-without a rendered pass can opt in.
-
-When available, prefer a browser integration that exposes only
-rendered visible text for the body layer — for example, Claude in
-Chrome (`get_page_text`) when running in an environment that supports
-it. Availability varies:
-
-- **Terminal-based agent CLIs**: may require an explicit opt-in flag
-  at launch or an in-session toggle. Check the CLI's documentation.
-- **Desktop apps and IDE extensions**: typically available once the
-  browser extension is installed and the host browser is running.
-- **Some environments cannot use browser integration at all** — for
-  example, third-party model providers (Bedrock / Vertex / Foundry)
-  or non-Chromium browsers. In those cases the raw-HTTP fetch remains
-  the fallback; body findings carry `visibility_unconfirmed` and the
-  gap is noted in `prioritisation/notes.md`.
+With `audit_scope: full` and a browser available, the rendered pass is
+mandatory before a body finding or an h1 composition claim ships as a Likely
+error. Load `references/rendered-verification.md` before auditing the body layer.
 
 ### Mitigations on the raw-HTML body path
 
-Even when the rendered pass is unavailable, `fetch_pages.py` drops
-the most obviously non-visible containers before returning body
-text. The script removes:
-
-- `<template>` subtrees entirely
-- elements with the `[hidden]` attribute
-- elements with `aria-hidden="true"`
-- elements with inline `style="display: none"` or
-  `style="visibility: hidden"`
-
-These heuristics do not catch JS-injected hidden state or
-CSS-class-driven `display: none` — those need the rendered pass.
-But they materially reduce the false-positive rate on the raw-HTTP
-path. Strings still surfaced after these drops, when the rendered
-pass is unavailable, carry `visibility_unconfirmed` rather than
-being treated as confirmed visible.
+What `fetch_pages.py` drops on the raw path, and why surviving strings carry
+`visibility_unconfirmed`: `references/rendered-verification.md`.
 
 ### Resolving `visibility_unconfirmed` with a rendered check
 
-A `visibility_unconfirmed` tag is a *to-do*, not a final state. If a
-browser is available, resolve it before delivery rather than shipping
-the caveat to the reviewer:
-
-1. Load the **rendered** page in the browser and confirm whether the
-   flagged string is actually shown.
-2. **Confirmed visible** → clear `sub_type` (the finding renders with
-   no caveat, and can be a Likely error if its class warrants it).
-   **Confirmed hidden** (template / `display:none`) → set
-   `dom_only_not_rendered`.
-3. Keep `visibility_unconfirmed` only when no rendered check is
-   possible at all.
-
-**`innerText` under-reports — cross-check before concluding "hidden".**
-A string can be genuinely visible yet absent from
-`document.body.innerText`: CSS-rotated or absolutely-positioned badges
-(e.g. a sale ribbon), collapsed accordions, and JS-hydrated product
-grids are common culprits. When `innerText` lacks a string the raw DOM
-(`textContent`) contains, **take a screenshot** (or check the
-element's `getBoundingClientRect` / computed style) before deciding —
-don't downgrade a real, visible finding on the strength of an
-`innerText` miss. The rendered check also catches raw-HTML **false
-positives** — a string present in the source HTML but never rendered
-(e.g. a nav label the live page drops); remove those.
+A to-do, resolved before delivery whenever a browser exists; an `innerText`
+miss alone never proves a string hidden. Steps: `references/rendered-verification.md`.
 
 ### Batch-resolving at scale — the per-domain iframe harness
 
-Navigating to every page that has body findings does not scale (a
-multi-locale batch can easily have 100+ affected pages). The harness
-that does: **one navigation per domain**, then a single in-page script
-that loads each affected path of that domain into a same-origin
-iframe and checks all of that page's excerpts in one go. Per excerpt:
-
-1. Normalise the iframe's `document.body.innerText` the same way the
-   cached `body_text` was normalised (`\s+` → single space) and test
-   substring containment → **visible**.
-2. On an innerText miss, find the deepest element whose `textContent`
-   contains the excerpt and check its computed style and
-   `getBoundingClientRect()` — display/visibility hidden in the
-   ancestor chain → **hidden**; zero-size rect → treat as hidden;
-   in-layout with a real rect → **visible** (this is the
-   innerText-under-reports fallback from above, automated).
-3. Not in the rendered DOM at all → candidate raw-HTML false positive
-   (see the drift rule below before removing).
-
-Return single-letter verdicts per excerpt, not text — tiny payloads,
-and no page content flows back through the conversation. Two
-implementation notes: transfer the excerpt list into the page
-**base64-encoded** (it sidesteps both quote-escaping and
-content-filter blocks on excerpts that happen to contain trigger
-words), and remember cross-origin iframes are not DOM-readable — the
-harness must run from a page on the same domain it is checking.
+Many affected pages: one navigation per domain and a same-origin iframe
+harness, in `references/rendered-verification.md`.
 
 ### Rendered capture is per-element — `innerText` falls back on unrendered elements
 
-"Rendered capture" is only rendered if the **element** is rendered.
-Per spec, `innerText` on an element that is not being rendered
-silently falls back to `textContent` — it answers a different
-question exactly when the element isn't in layout, which is exactly
-when you were relying on it to filter hidden descendants. The classic
-trap is a responsive template whose only `<h1>` is the mobile
-variant: `display:none` at a desktop capture viewport, so
-`h1.innerText` returns the full `textContent` — including CSS-hidden
-descendants such as an artist or brand name duplicated in a product
-H1 for a layout variant — and every element in the subtree reports a
-0×0 rect. No wait time fixes this; it is a viewport property, not a
-timing one.
-
-Capture logic for heading fields on responsive sites:
-
-1. **Check the element's bounding rect before trusting `innerText`.**
-   A zero-size `getBoundingClientRect()` means the "rendered" read is
-   `textContent` in disguise.
-2. **Prefer the first `<h1>` with a non-zero rect** — the rendered
-   desktop variant, when one exists.
-3. **When no `<h1>` is rendered at the capture viewport** (a
-   mobile-only h1 at a desktop viewport), take the first `<h1>` and
-   compute its visible composition manually: walk its descendants and
-   drop any with computed `display:none` / `visibility:hidden`,
-   **skipping the check on the root itself** — the root's hiding is
-   viewport-conditional, but its hidden descendants are hidden at
-   every viewport.
-4. **Record the capture viewport in the cached data** (e.g. an
-   `h1_capture` note alongside the field in
-   `data/pages-{lang}-batch-N.json`) so findings on responsive
-   variants stay interpretable later.
-
-The same rect-check applies inside the iframe harness above: harness
-step 2 already covers `innerText` *misses* on visible content; this
-rule covers the inverse failure, where `innerText` *hits* on text
-that is never visible because the element it was read from isn't
-rendered at the capture viewport.
+Check an element's rect before trusting its `innerText`: an unrendered element
+returns `textContent`. Capture rules: `references/rendered-verification.md`.
 
 ### Verify close to fetch — drift on time-variant templates
 
-A rendered verification that runs hours after the fetch doesn't just
-verify — it **re-samples a moving target**. Homepage carousels,
-campaign slots and product-grid hydration rotate content, so a string
-that was genuinely served at fetch time can be legitimately absent at
-verify time. "Not in the rendered DOM" therefore has two readings:
-*never rendered* (a true raw-HTML false positive — remove) and *no
-longer present* (stale — the finding was probably real). Rules:
-
-- Run the rendered verification as close to the fetch as possible —
-  ideally in the same session, before any audit agents run.
-- On **time-variant surfaces** (homepage, campaign/exposure slots,
-  "popular now" grids), treat a not-in-DOM verdict as
-  "unverifiable — content rotated", not as proof of a false positive.
-  Drop the finding from the deliverable if it can't be confirmed, but
-  record the removal in `prioritisation/notes.md`; if the same defect
-  pattern is confirmed on other locales, say so there, so the
-  systemic pattern isn't silently lost.
-- On stable surfaces (product copy, CMS/legal text), not-in-DOM is a
-  genuine false-positive signal and the finding is removed outright.
+On time-variant surfaces a not-in-DOM verdict means content rotated, not a
+false positive. Rules: `references/rendered-verification.md`.
 
 ---
 
@@ -787,299 +566,31 @@ may be warranted rather than listing every minor flaw.
 
 ### Scaling the audit across locales
 
-A full audit — every locale × every page type — is too large for one
-pass. Fan it out: **one agent per language**, each reading only its
-cached `data/pages-{lang}-batch-N.json` and emitting that language's
-findings. Languages are independent, so this parallelises cleanly (e.g.
-via a workflow of per-language agents).
-
-Subagents can fabricate or paraphrase excerpts, so the fan-out is only
-safe behind a **mandatory central verification gate**: after the agents
-return, check that **every finding's `excerpt` is a verbatim substring
-of the cached field it claims** (`title` / `meta_description` / `h1` /
-`body_text`, and the nested `source_pair` for `source_excerpt`). Drop
-any finding that doesn't match — this is what turns "trust the agent"
-into "verify against source data," and it is not optional. Re-state the
-diagnosis rules (no "should be", no impact claims, terse) in the agent
-contract and post-scan the merged findings for slips. Breadth matters
-too: auditing *all* page types — not just core commercial pages — is
-what surfaces page-type-level gaps (e.g. author or wiki templates left
-untranslated across every market).
-
-Two practices keep the gate honest:
-
-- **State the gate in the agent contract.** Tell each agent its
-  excerpts will be literal-substring-checked against the cached JSON
-  and that non-matches are dropped. Agents that know the check exists
-  copy-paste rather than paraphrase — in practice this turns the gate
-  from a filter into a deterrent (a 25-agent run produced 470/470
-  verbatim excerpts under this contract).
-- **Negative-control the gate.** A gate that has never been seen to
-  fail is indistinguishable from a gate that never ran. Before
-  trusting a 100% pass, inject one corrupted excerpt and one corrupted
-  `source_excerpt` into a **copy** of the results and confirm both are
-  caught — and make the control non-destructive (point it at a scratch
-  output path; a control run that overwrites the real findings JSON
-  has to be re-run with the real input afterwards).
-
-**For an overview across many locales, detect first, then read.** Where
-the goal is a cross-market overview rather than an exhaustive per-page
-audit, one agent per language is the expensive route and the less
-consistent one. The cheaper route has three stages:
-
-1. **Automated candidate pass over the cached pages:** per-block
-   stopword language identification; an identical-to-source check that
-   **excludes strings present on 60% or more of locales** (artist,
-   product or release names, which are legitimately identical); mentions
-   of another market's domain; entity or markup leaks; missing metas.
-   Run the identical-to-source check only where the source block itself
-   classifies as the source language. A market-specific page can exist on
-   the source domain in the market's own language — a country's warranty
-   terms, say — and then a correct translation matches its "source".
-   Call a block the source language only on two or more distinct
-   source-language stopwords, or above a minimum block length set for the
-   project. A short title shares a single stopword with the source
-   language by chance: "Sofás a medida" is Spanish, not English.
-2. **A manual read of the title / meta / H1 layer per market**, printed
-   side by side, which is where most visible defects sit and which a
-   detector reads worst.
-3. **Findings built by a script that cuts every excerpt from the cache**,
-   so the verbatim gate passes by construction — and is still run and
-   negative-controlled, because a gate never seen to fail proves nothing.
-
-Two detector artefacts would otherwise become false Likely errors: block
-segmentation by an element's direct text children splits a sentence at
-an inline link (the fragment "Der Widerruf kann mit unserem erfolgen" was
-complete in `body_text`), so confirm a truncated-sentence candidate
-against `body_text`; and byte-based truncation in the inspection pipeline
-produces U+FFFD that is not in the raw HTML, so confirm any broken
-character on the raw bytes. A pattern repeating across many pages of one
-language (an English meta layer, a reused homepage meta, legal pages
-naming another market's domain) is reported once with its count in the
-headline and every instance in an accompanying file — listing each
-instance buried the findings in one run (774 cards, 418 after capping).
+Per-language agents are safe only behind the mandatory central verbatim-excerpt
+gate, stated in the agent contract and negative-controlled. Load
+`references/scaling-across-locales.md` before dispatching them or building an overview.
 
 ### Stage 2 — claim verification and re-bucketing (mandatory)
 
-The verbatim gate proves the excerpts are real. It proves nothing
-about the **claims made on top of them** — and wrong buckets,
-unverifiable linguistic assertions and remedies-in-disguise are what
-actually erode a reviewer's trust. After the verbatim gate (and after
-the rendered visibility pass), run a second pass over every
-**assertive finding**: all Likely errors, plus every Worth-checking
-finding whose diagnosis names a mechanical error class (typo,
-contamination, duplication, encoding). Per finding, answer:
-
-1. **Is the bucket right for the class — especially after visibility
-   cleared?** The raw-HTML rule forces body findings into Worth
-   checking; once the rendered pass confirms visibility, findings of
-   mechanical classes (typo, cross-language contamination, encoded
-   entities, duplication) move **up** to Likely errors — and the
-   hedge, which belonged to the *visibility* uncertainty and not the
-   class, is stripped. Leaving "looks like a typo … worth a translator
-   review" on a visibility-confirmed, unambiguous typo reads as
-   linguistic timidity and buries real defects among judgment calls.
-2. **Is every linguistic claim corroborated or reworded?** A diagnosis
-   that invokes a norm ("nonstandard per X orthography", "doubled
-   determiner") asserts something nobody checked — and attested
-   idioms, legal boilerplate and regional conventions WILL contradict
-   it. Corroborate cheaply (the cached corpus is right there: does the
-   site itself spell it differently elsewhere? does the source pair?)
-   or reword the diagnosis down to the observable fact ("spelling
-   differs from the same word elsewhere on the page"), which survives
-   native review even when the norm-claim wouldn't.
-
-   **The skepticism has a floor — impossible morphology is
-   assertable.** Corroborate-or-reword applies to claims about *usage
-   and convention*. A morphologically impossible inflection of a
-   common word — an impossible form, not an unusual choice — is
-   defensible without in-page corroboration and stays in Likely
-   errors. Worked contrast: a doubled determiner construction is
-   unusual but could be attested legal boilerplate or idiom → defer
-   to Worth checking unless corroborated; a malformed superlative of
-   a common adjective (a form the language simply does not have, where
-   only one well-formed superlative exists) has no attested reading
-   at all → keep in Likely errors even when the page offers no
-   corroborating counterpart. Over-applied skepticism relabels certain
-   knowledge as doubt, which costs credibility the same way
-   overclaiming does — just in the opposite direction.
-3. **Is a remedy hiding in the diagnosis?** "Typo for X" / "instead of
-   X" prescribe a correction just as much as "should be X" — and the
-   implied correction can itself be wrong (a German plural that takes
-   no -s). Quoting the source field is fine; naming the "intended"
-   word is not. Add these patterns to the diagnosis post-scan.
-4. **Is the group one claim?** A card that bundles several distinct
-   micro-claims (a doubled word + an abbreviation redundancy + a brand
-   casing) lets one disputed sub-claim taint the others. One card =
-   one claim a reviewer can accept or reject as a unit.
-5. **Is the highlight unambiguous?** See the highlight rule in
-   Phase 5 — a short token that also occurs inside longer words gets
-   marked in the wrong place by the renderer.
-
-This stage exists because per-finding attention is exactly what the
-fan-out trades away: isolated per-locale agents classify sloppily at
-the margins, and a central review that only greps for rule phrases is
-statistical, not per-claim. Scale the verification to the same surface
-the reviewer reads — every assertive finding gets one adversarial pass
-before delivery. Languages are independent here too, so this stage
-fans out the same way the audit does.
+Every assertive finding gets one adversarial claim check before delivery.
+Load `references/claim-verification.md` after the verbatim gate and the rendered
+pass, before building any audit doc that carries assertive findings.
 
 ### Per-language section structure
 
-After auditing all URLs in the batch, produce the audit doc grouped
-by target language — in the HTML deliverable each language is its own
-**tab**, so a section can be handed to that market's reviewer on its
-own. Within a language, items split into **Likely errors** and **Worth
-checking**, and findings that share an `issue_group` collapse into one
-card (diagnosis stated once, each affected element listed beneath it):
-
-```
-[Language name] ([code])
-
-Likely errors
-  • [terse diagnosis — the anomaly, nothing more]
-       Title             — [URL]   "[exact excerpt]"
-       Meta description  — [URL]   "[exact excerpt]"
-  • [terse diagnosis]
-       Meta description  — [URL]   "[exact excerpt]"
-
-Worth checking
-  • [terse diagnosis] (could be deliberate)
-       H1                — [URL]   "[exact excerpt]"
-```
-
-Repetition **across** languages is fine — each tab stands alone, so the
-same one-line diagnosis appearing in several language tabs is expected.
-Repetition **within** a language (the same block restated for title,
-meta and H1 of one page) is what `issue_group` removes.
-
-**A grouped card's headline must be true of every item under it.** When an
-`issue_group` bundles several findings, set a group-level `issue_title` that
-describes the whole block (e.g. "Several English strings left untranslated on
-the author page") — don't let the card inherit only the first finding's
-diagnosis, which fits just one item. Group **only same-theme** findings: if a
-group would mix distinct issue types (a missing-diacritic H1 *and* a duplicated
-brand token), split them into separate cards instead. `build_audit_doc.py` uses
-`issue_title` as the card headline when present, else the first finding's
-diagnosis.
-
-"Each tab stands alone" cuts both ways: it not only *permits* cross-language
-repetition, it **requires** it. A defect present in several languages'
-equivalent field must be emitted in **every** affected language tab — never
-consolidated onto the source tab or one tab. `issue_group` de-dupes strictly
-**within** a language; it does **not** propagate a recurring defect across
-languages, so that propagation is your responsibility. Example: a "TCP lll"
-defect (three lowercase L's instead of Roman "III") in the title of the EN
-source and the DE/ES/IT/NL/PT versions must appear as a finding in each of
-those tabs — a reviewer for one market only opens their own tab, so a defect
-logged elsewhere is invisible to them. **Per-finding pre-flight check:** does
-this same defect appear in other languages' equivalent field? If so, emit it
-there too.
-
-If a language has no Likely errors, omit that subsection rather than
-leaving it empty. Same for Worth checking. If a language has no
-findings at all, the section reads `No issues flagged in this batch.`
-— this is a useful signal in itself, and requires the language to
-appear in `audited_languages` (below) even if zero findings reference
-it. Coverage (what was checked) and findings (what was wrong) are
-reported independently.
-
-**Show coverage at the URL level, not just the language level.** A
-language-level "audited" flag is not enough — a reader still can't tell
-WHICH pages were checked, so "No issues flagged" reads as "maybe nothing
-was looked at." Each language section must include a **Pages checked** list
-of the audited URLs:
-
-```
-Pages checked
-  • [URL]
-  • [URL]
-```
-
-For a clean language this is the whole section under the
-`No issues flagged in this batch.` line; for a language with findings, list
-the checked-but-clean URLs too, so the examined set is fully visible. An
-audit deliverable should make coverage legible, not just defects — "no
-issues" is only trustworthy when the reader can see the examined set.
+One tab per language, Likely errors then Worth checking, plus Pages checked. A
+defect in several languages is emitted in every affected tab (`issue_group` is
+within-language). Load `references/audit-doc-output.md` before writing the findings JSON.
 
 ### Findings JSON and `audited_languages`
 
-The audit phase writes the raw findings to
-`findings/raw/batch-NN.json` with this shape:
-
-```json
-{
-  "project_name": "...",
-  "audit_date": "YYYY-MM-DD",
-  "batch_number": N,
-  "source_language": "en",
-  "audited_languages": ["de", "fr", "es"],
-  "coverage": {
-    "de": ["https://…/de/page-a", "https://…/de/page-b"],
-    "fr": ["https://…/fr/page-a"],
-    "es": ["https://…/es/page-a"]
-  },
-  "findings": [ ... ]
-}
-```
-
-The `audited_languages` array is **load-bearing**. Without it,
-`build_audit_doc.py` groups by the languages that appear in the
-findings array — and a language audited with zero findings disappears
-from the deliverable, getting misread as "not checked" instead of
-"checked, clean". Always populate it with every language touched in
-the batch.
-
-The `coverage` map carries the **per-language set of audited URLs** that
-the deliverable's "Pages checked" list renders from — what turns a clean
-language from an unsupported "No issues" into evidence of work performed.
-Populate it for every audited language, clean or not. (`build_audit_doc.py`
-must render a "Pages checked" list per language from this map; the SKILL
-documents the behaviour, the script change lives in `scripts/`.)
-
-Each finding object carries `language`, `url`, `field`, `excerpt`,
-`diagnosis`, `bucket`, plus optional `source_excerpt`, `sub_type`,
-`issue_group` (collapse-into-one-card key, scoped per language), and
-`highlight` (a substring of the excerpt to mark in the HTML — must
-identify its occurrence unambiguously; `build_audit_doc.py` marks
-word-boundary matches only and skips marking rather than mark the
-wrong occurrence of an ambiguous token). The full per-finding shape
-is documented at the top of `build_audit_doc.py`.
+`audited_languages` and `coverage` are load-bearing: populate both for every
+language touched, clean or not. Shape: `references/audit-doc-output.md`.
 
 ### Output
 
-Write the reviewer-facing deliverable with the bundled script
-`scripts/build_audit_doc.py`, which renders from the raw findings JSON:
-
-- `findings/audit-YYYY-MM-DD-batch-NN.html` — **primary**. A
-  self-contained report (inline CSS/JS, no dependencies) with a summary
-  header, one **tab per language**, colour-coded Likely / Worth
-  buckets, and grouped issue cards. Opens in any browser; print to PDF
-  for a client hand-off.
-- `findings/audit-YYYY-MM-DD-batch-NN.md` — version-controllable mirror.
-- `findings/audit-YYYY-MM-DD-batch-NN.docx` — only with `--format docx`
-  (requires python-docx).
-
-Default output is `html,md`. The script emits a "No issues flagged in
-this batch." line for any clean `audited_languages` entry, collapses
-findings that share an `issue_group` into one card, and escapes
-excerpts so literal markup (a stray `<br>`, an `&amp;`) shows verbatim
-instead of rendering.
-
-**Optional origin pass — group findings by who can fix them.** Where the
-site's codebase is available, trace each finding to the code path or data
-store that renders it. Record its fix route in an optional `fix_route`
-field on the finding: `code` (a pull request), `cms` (an entry edited in
-the admin), `translation-import` (the translation table or spreadsheet),
-or `product-data`. The client team acts by owner, not by symptom, and one
-symptom can have several routes: an English fallback can be a missing
-translation row or a locale-mapping bug in code. `build_audit_doc.py`
-does not render the field; use it for the fix list that follows native
-review (Phase 5.5).
-
-The deliverable **must not** show verdict tags or review attribution.
-The audit doc is INPUT to native review, not OUTPUT of it (see
-Phase 5.5 — Post-review triage).
+Render with `scripts/build_audit_doc.py` (default `html,md`); the deliverable
+never shows verdict tags or review attribution. Details: `references/audit-doc-output.md`.
 
 ### Move audited URLs
 
@@ -1107,144 +618,17 @@ etc.). Always use `state.py`.
 
 ## Phase 5.5 — Post-review triage
 
-The audit doc is the **input** to native review, not the output of
-it. A native speaker reads the deliverable, decides which findings
-are real errors and which are deliberate translator choices, and
-those decisions get recorded in the findings JSON for downstream use
-(typically a fix list for the dev team that's separate from the
-audit deliverable itself).
-
-### The audit doc must not attribute the agent's judgments to a native reviewer
-
-The most important rule in this phase is what the audit doc must
-**not** do: it must not show "Confirmed by native review" tags,
-"Dismissed by native review" subsections, or any other framing that
-attributes the agent's own judgments to a human expert who has not
-seen the document yet. The doc is questions for the native speaker,
-not verdicts from them. Anything that reads otherwise launders the
-agent's flagging into a native speaker's assertion under borrowed
-authority — which violates the central "flag, don't assert" rule
-and erodes trust the moment the native reader spots a tag they
-didn't apply.
-
-This is enforced in `build_audit_doc.py`: the script reads the
-findings JSON but **never** renders `review_status`, `review_note`,
-or `reviewer` into the deliverable. Those fields are data, not
-display copy.
-
-### Review-status fields on the findings JSON
-
-Each finding carries three optional fields that capture the
-post-review state:
-
-| field | meaning |
-|---|---|
-| `review_status` | `unreviewed` (default) / `confirmed` / `dismissed` / `edited`. |
-| `review_note` | Free-text rationale (or the native speaker's edit, when status is `edited`). |
-| `reviewer` | `native_speaker` once a human reviews. `null` while the finding is unreviewed. Distinguishes a native verdict from an agent's own classification. |
-
-These fields are set by `scripts/apply_verdicts.py`, which takes a
-verdict CSV the reviewer fills in (one row per finding, schema:
-`url, field, excerpt, review_status, review_note`) and merges it
-into the findings JSON. The script sets `reviewer: native_speaker`
-automatically — it is the dedicated path for capturing human review,
-not agent judgments.
-
-### Two equally valid capture paths
-
-- **Verdict CSV → `apply_verdicts.py`** — the canonical path. The
-  reviewer fills in the CSV, the script merges it. Disambiguates
-  matching by `(url, field, excerpt)` and reports rows that didn't
-  match.
-- **Direct JSON edit** — for reviewers comfortable with JSON, the
-  same three fields can be set by hand. The schema is the same.
-
-Doc-side annotation (e.g., inline tags in Word) is not currently
-supported by the bundled scripts; a future iteration could add an
-annotation extractor.
-
-### What happens after verdicts are captured
-
-The findings JSON now carries the review state. Three things follow:
-
-1. The **fix list** for the dev team is the set of findings with
-   `review_status: confirmed` (plus `edited` items, with the edit
-   noted). This is a separate artefact from the audit doc — a future
-   `build_fix_list.py` may render it. Until then, the agent can
-   summarise the confirmed items into a fresh document or message
-   when the dev team needs the deliverable.
-2. **Dismissed items leave the actionable output.** A dismissed
-   finding stays in the findings JSON for the record, but it does
-   not appear in the fix list and is not a target of Phase 6
-   verification. There is no "Dismissed" section in the reviewer-
-   facing audit doc — dismissals are private to the JSON.
-3. **Phase 6 verifies only the confirmed set.** If a URL has no
-   confirmed findings, Phase 6 has nothing to verify for it; the URL
-   can move directly to `verified.csv` (with a note that no fix was
-   needed) or stay in `audited.csv` if the review is incomplete.
-
-### Bridge to Phase 6
-
-Phase 6 verifies that the **confirmed** set has been deployed live.
-Dismissed items are out of scope for Phase 6 by definition. If a
-fix is verified, the URL moves to `verified.csv` with a reference to
-the confirmed set; otherwise it stays in `audited.csv` with the same
-lifecycle as before. Use `scripts/state.py move` for these
-transitions.
+The audit doc is the input to native review, never its output: it must not
+attribute the agent's judgments to a native reviewer. When verdicts arrive, load
+`references/post-review-triage.md` before capturing them with `scripts/apply_verdicts.py`.
 
 ---
 
 ## Phase 6 — Verify fixes
 
-When the client confirms that fixes for an audit batch have been
-deployed, the agent verifies them and moves URLs from `audited.csv` to
-`verified.csv`.
-
-**The deployment gate — whether it shipped, then when.** Shared rule —
-see `redirect-verification/SKILL.md` § Shared verification rules
-(deployment gate), in the published open-source companion
-redirect-verification (https://github.com/rebelytics/redirect-verification):
-two ordered questions precede every verdict — was the
-fix deployed at all, then when. The client's confirmation usually
-arrives as a ticket comment or an email, which dates the report, not the
-change. The instance here:
-
-- While Question 1 (deployed at all?) is unresolved, say so in the
-  report's opening line, report live state plainly with no causal
-  reading of it, and hold the `audited → verified` transitions.
-- A **Verified** verdict that attributes the change to the reported fix
-  needs Question 1 — the page may have been correct all along or fixed
-  by something unrelated, and a cache-busted re-fetch does not exempt
-  it.
-- A **Not fixed** verdict additionally needs Question 2: the re-fetch
-  must postdate a deployment date pinned from evidence. If the date
-  cannot be pinned, record the range in `prioritisation/notes.md`,
-  treat "Not fixed" as provisional, and re-check once the date is
-  established rather than incrementing `verify_attempts` against a fix
-  that had not yet shipped.
-
-For each URL in the verification set:
-
-1. Re-fetch the live page (same script as Phase 4).
-2. Compare against the findings recorded for that URL in the audit
-   doc.
-3. Classify:
-   - **Verified** — the flagged text is gone or has been corrected to
-     match the diagnosis. Move to `verified.csv` with a `verified_date`
-     column and a reference to the audit file.
-   - **Not fixed** — the flagged text is unchanged. Leave in
-     `audited.csv` and add a `verify_attempts` counter. Optionally
-     re-audit on the next batch run.
-   - **Changed but new issue** — the flagged text was edited but the
-     edit introduced a different problem. Move back to `open.csv` with
-     a `notes` column referencing the previous audit and the new
-     concern, so the next batch audits it fresh.
-
-Verification re-fetches always go through the same script as Phase 4,
-so the agent never reasons about live state from cached data. Use
-`scripts/state.py move` for the `audited → verified` and `audited →
-open` transitions; the script handles the schema and regenerates
-`README.md` automatically when `--regen-readme` is passed.
+No `audited → verified` move until the deployment gate (deployed at all, then
+when) is answered from evidence and a fresh re-fetch, never cached data, shows
+the fix. Load `references/verify-fixes.md` when the client reports fixes deployed.
 
 ---
 
@@ -1308,105 +692,16 @@ depending on context).
 
 ## Bundled scripts
 
-The scripts in `scripts/`:
-
-- **`fetch_sitemap.py`** (Phase 2) — fetches one or more sitemaps and
-  writes `open.csv`. Handles sitemap indexes, hreflang annotations, and
-  per-language sitemaps. Applies the source-language pairing rule and
-  keeps target-side regional variants distinct (home-region
-  heuristic, `--prefer-region` override). Excludes source-language
-  URLs from `open.csv` by default; use `--include-source` to opt in.
-- **`build_mapping.py`** (Phase 2 fallback) — for sites where each
-  language lives on its own ccTLD/domain and the per-shop sitemaps
-  carry no hreflang. Walks the source-language pages, reads on-page
-  `<link rel="alternate" hreflang>`, and emits both
-  `data/url-mapping.json` and `urls/open.csv` (target rows with
-  `canonical_url` set to the source URL). Same regional-variant
-  handling as `fetch_sitemap.py`.
-- **`fetch_pages.py`** (Phase 4) — fetches live page content (title,
-  H1, meta description, body text, status) for a batch of URLs.
-  Writes `data/pages-{lang}-batch-N.json`. Normalises whitespace
-  uniformly across all extracted fields. Drops `<template>`,
-  `[hidden]`, `aria-hidden`, and inline `display: none` /
-  `visibility: hidden` containers before returning body text — and
-  applies the same drops inside the `<h1>` subtree, since templates
-  hide parts of headings with CSS. Tolerates bs4 ≥ 4.13's behaviour
-  of surfacing already-decomposed elements in later attribute scans.
-  Supports `--from-csv` mode to read pre-extracted content from a CSV
-  instead of fetching, for use in sandboxed environments.
-- **`collect_browser_dump.py`** (Phase 4, browser-fetch playbook) —
-  the disk side of the OPFS bridge. After in-page JS writes the
-  fetched-HTML payload (with a unique marker prefix) to the Origin
-  Private File System, this script locates the newest matching file
-  under the browser profile's `File System/` store, verifies the
-  marker, and extracts the JSON payload to a target path. `--print-js`
-  prints a template of the in-page collector for reference.
-- **`build_audit_doc.py`** (Phase 5) — assembles the reviewer-facing
-  deliverable from a findings JSON at `findings/raw/batch-NN.json`.
-  Default output `html,md`: a self-contained **HTML report with one tab
-  per language** (inline CSS/JS, no dependencies — the primary
-  deliverable) plus a Markdown mirror; `--format docx` adds a Word file
-  (needs python-docx). Renders a summary header, a "sample audit — not a
-  complete crawl" scope banner, the Likely errors / Worth checking split,
-  a **Pages checked** list per language (from the `coverage` map), and
-  collapses findings that share an `issue_group` into one card headlined
-  by `issue_title` (else the first finding's diagnosis). Prefixes
-  body-layer findings by `sub_type` (`[DOM-only, not rendered]` /
-  `[Visibility unconfirmed …]`), HTML-escapes excerpts so literal markup
-  shows verbatim, emits "No issues flagged in this batch." for every
-  clean `audited_languages` entry, and prints a footer with author
-  attribution + CC BY 4.0. Highlights are marked on **word-boundary
-  occurrences only** — a single embedded match is honoured, multiple
-  ambiguous matches get no mark rather than a wrong mark. The
-  deliverable **does not** show verdict state — see Phase 5.5.
-- **`apply_verdicts.py`** (Phase 5.5) — patches the findings JSON
-  with native-reviewer verdicts from a verdict CSV (`url`, `field`,
-  `excerpt`, `review_status`, optional `review_note`). Sets
-  `reviewer: native_speaker` automatically. Used to capture human
-  review without hand-editing JSON. Does **not** regenerate the
-  reviewer-facing audit doc — verdict state lives in the JSON and
-  feeds downstream artefacts (e.g. a fix list), not the audit
-  deliverable.
-- **`state.py`** (all phases) — three-list lifecycle bookkeeping.
-  Subcommands: `init` creates the four state CSVs from the asset
-  templates; `move` shifts URLs between lists with atomic
-  read-filter-write semantics and optional new columns (e.g.
-  `audit_date`); `exclude` drops URLs to `excluded.csv` with a
-  reason; `reaudit` re-queues a URL from `audited`/`verified` back to
-  `open`; `status` and `validate` report counts and check schemas
-  against the templates. The agent should use `state.py` rather than
-  hand-rolling CSV operations — that's where schema drift creeps in.
-
-Each script is CLI-runnable (`python scripts/<name>.py --help`) and
-runs in any environment with Python 3.9+. The agent should prefer
-the scripts over reimplementing the fetch/parse/build/state logic
-per session.
-
-### Dependencies
-
-Required Python packages (mirrors `requirements.txt`):
-
-- `requests` — HTTP fetching (`fetch_sitemap.py`, `fetch_pages.py`)
-- `beautifulsoup4` — HTML parsing for page-content extraction
-  (`fetch_pages.py`)
-- `PyYAML` — `config.yml` parsing (all scripts)
-- `python-docx` — **optional**, only for `build_audit_doc.py --format
-  docx`. The default HTML + Markdown deliverables need no third-party
-  packages.
-
-Install with `pip install -r requirements.txt` as part of Phase 1
-setup before running the scripts for the first time. Trusting the
-prose alone without installing the requirements file produces a
-`ModuleNotFoundError` at the page-fetch phase. Keep the prose
-dependency list and the requirements file in sync — if one is updated,
-update both.
+Use the scripts in `scripts/` rather than reimplementing their logic; never
+hand-roll CSV moves. Load `references/bundled-scripts.md` when choosing a
+script, before the first run in a project, or on a missing-module error.
 
 ---
 
 ## Pre-flight verification (before delivering an audit doc)
 
 Before delivering an audit doc, the agent must re-read this skill's
-rules and check the doc against them. This is a quality gate, not
+rules, and the reference files this batch's episodes loaded, and check the doc against them. This is a quality gate, not
 overhead — every rule violation that slips through erodes the audit's
 credibility with the translators who act on it. Check in order:
 
@@ -1441,7 +736,8 @@ credibility with the translators who act on it. Check in order:
    has been moved from `open.csv` to `audited.csv`. No URL appears in
    two CSVs at once.
 7. **Source pairing is correct.** Every non-source row's
-   `canonical_url` was chosen by the priority order in Phase 2 (sitemap
+   `canonical_url` was chosen by the priority order in Phase 2
+   (`references/discovery-variants.md`; sitemap
    `<loc>` → `x-default` → bare base code → region-suffixed). No
    source-language URLs are queued as audit targets unless the user
    explicitly opted in.
@@ -1486,7 +782,7 @@ credibility with the translators who act on it. Check in order:
     reviewer can accept or reject as a unit.
 14. **Claim verification ran over every assertive finding.** All
     Likely errors, plus Worth-checking findings naming a mechanical
-    class, got the Stage-2 pass: buckets re-checked (mechanical
+    class, got the Stage-2 pass (`references/claim-verification.md`): buckets re-checked (mechanical
     classes promoted once visibility was confirmed, stale visibility
     hedges stripped), norm-invoking linguistic claims corroborated or
     reworded to the observable fact — with the impossible-morphology
@@ -1496,7 +792,7 @@ credibility with the translators who act on it. Check in order:
     occurrence uniquely (word-boundary match, or disambiguating
     context included) — a mark on the wrong occurrence of a short
     token turns a correct finding into an apparent blunder.
-16. **Phase 6 verdicts passed the deployment gate** (shared rule —
+16. **Phase 6 verdicts passed the deployment gate** (`references/verify-fixes.md`; shared rule —
     `redirect-verification/SKILL.md` § Shared verification rules, in the
     published open-source companion redirect-verification,
     https://github.com/rebelytics/redirect-verification). Where
@@ -1519,7 +815,7 @@ If any check fails, fix it before presenting the doc to the user.
 | Where do new URLs go? | `urls/open.csv`, sorted by priority. |
 | Where do findings go? | `findings/audit-YYYY-MM-DD-batch-N.html` (primary — tabs per language) + `.md` mirror; `.docx` only with `--format docx`. |
 | When does a URL move from `open` to `audited`? | When the audit doc for its batch is written. |
-| When does a URL move from `audited` to `verified`? | When the agent re-fetches it, confirms the fix is live, and the deployment gate (Phase 6) is closed — a correct page alone does not establish that the reported fix shipped. |
+| When does a URL move from `audited` to `verified`? | When the agent re-fetches it, confirms the fix is live, and the deployment gate (Phase 6, `references/verify-fixes.md`) is closed — a correct page alone does not establish that the reported fix shipped. |
 | Can a URL move backward? | Yes — `audited` → `open` if a fix introduces a new issue. |
 | What's the default batch size? | 20 for full audits (meta + body), 50 for meta-only. |
 | Can a batch result be extrapolated to the rest of the site, or to other translations? | No — authored content has no generator to infer from, and translations of one document differ from each other. Coverage claims need enumeration; size a specific pattern with a targeted full sweep and per-locale counts (Phase 3). |
@@ -1529,7 +825,7 @@ If any check fails, fix it before presenting the doc to the user.
 | How long should a diagnosis be? | As short as possible — name the anomaly only. No "should be X", no asserted impact, nothing the excerpt already shows. Many findings need none. |
 | Same issue across a page's title/meta/H1? | Give them one `issue_group` → renders as a single card, not repeated blocks. (`issue_group` is within-language only.) |
 | Same defect in several languages' equivalent field? | Emit it in **every** affected language tab — repetition across tabs is required, not just allowed. `issue_group` does not propagate across languages. |
-| Auditing many locales at once? | One agent per language reading its cached JSON, then TWO mandatory central stages: the verbatim-excerpt gate (drop non-matches; state it in the agent contract; negative-control it), and the claim-verification pass over every assertive finding. Cover all page types, not just core pages. |
+| Auditing many locales at once? | One agent per language reading its cached JSON, then TWO mandatory central stages: the verbatim-excerpt gate (drop non-matches; state it in the agent contract; negative-control it), and the claim-verification pass over every assertive finding. Cover all page types, not just core pages. Load `references/scaling-across-locales.md` and `references/claim-verification.md` first. |
 | Clear typo in the body, visibility now confirmed? | Promote to Likely error and strip the hedge — the hedge belonged to the visibility uncertainty, not the error class. |
 | Diagnosis says "nonstandard per [language] orthography"? | That's an unverified norm-claim. Corroborate against the cached corpus (same word elsewhere on the site / in the source pair) or reword to the observable fact. |
 | Morphologically impossible inflection of a common word, no in-page corroboration? | Assertable — an impossible form is not a usage claim. Keep in Likely errors. Corroborate-or-reword applies to convention claims, not malformed morphology. |
@@ -1537,8 +833,8 @@ If any check fails, fix it before presenting the doc to the user.
 | Rendered h1 capture still includes a hidden duplicate? | Check the element's rect — `innerText` falls back to `textContent` on unrendered elements (e.g. a mobile-only h1 at a desktop capture viewport). Prefer the first h1 with a non-zero rect; if none, filter the first h1's hidden descendants manually (skip the rect check on the root) and record the capture viewport. |
 | Setting a `highlight`? | It must locate its occurrence unambiguously — add context if the token appears anywhere else in the excerpt (even mid-word). The renderer marks word-boundary matches only. |
 | Grouped card with several distinct items? | Give the group an `issue_title` headline true of the whole block; group only same-theme findings and split mixed-type ones into separate cards. |
-| What if direct HTTP fetch is blocked? | Cloudflare JS challenge or rate-limit (403/418/429) defeats `requests` even with full headers — use the browser-fetch playbook: probe sibling-domain CORS first (open CORS = fetch every locale from ONE tab), accumulate in `window`, exfiltrate via the OPFS bridge (`collect_browser_dump.py`). Or `fetch_pages.py --from-csv` with a Screaming Frog / browser export. |
-| Browser downloads / clipboard / localhost POST all fail silently? | Expected in automated browser sessions. Use the OPFS bridge: write the payload with a marker prefix via `navigator.storage.getDirectory()`, collect from the profile's `File System/` store with `collect_browser_dump.py`. |
+| What if direct HTTP fetch is blocked? | Cloudflare JS challenge or rate-limit (403/418/429) defeats `requests` even with full headers — use the browser-fetch playbook (`references/browser-fetch.md`): probe sibling-domain CORS first (open CORS = fetch every locale from ONE tab), accumulate in `window`, exfiltrate via the OPFS bridge (`collect_browser_dump.py`). Or `fetch_pages.py --from-csv` with a Screaming Frog / browser export. |
+| Browser downloads / clipboard / localhost POST all fail silently? | Expected in automated browser sessions. Use the OPFS bridge (`references/browser-fetch.md`): write the payload with a marker prefix via `navigator.storage.getDirectory()`, collect from the profile's `File System/` store with `collect_browser_dump.py`. |
 | Rendered verification long after the fetch? | Don't — verify close to fetch. On time-variant surfaces (carousels, campaign slots) a not-in-DOM verdict means "content rotated, unverifiable", not "false positive"; record removals in the project notes. |
 | What if the site has no sitemap? | Fall back to a crawl (Screaming Frog, equivalent) and import the URL list via `--from-csv`. |
 | Which source URL is used for comparison? | Sitemap `<loc>` → `x-default` → bare base code → region-suffixed (Phase 2). |

@@ -122,6 +122,16 @@ translation-audit/
 │   ├── apply_verdicts.py       # post-review verdict CSV → JSON
 │   └── state.py                # three-list lifecycle bookkeeping
 ├── references/
+│   ├── ceilings.txt            # declared line ceilings per file
+│   ├── discovery-variants.md   # Phase 2: source-language regional variants
+│   ├── browser-fetch.md        # Phase 4: browser-fetch playbook for bot-blocked sites
+│   ├── rendered-verification.md # Phase 4: the rendered browser pass
+│   ├── scaling-across-locales.md # Phase 5: fanning the audit out per language
+│   ├── claim-verification.md   # Phase 5 Stage 2: verifying assertive findings
+│   ├── audit-doc-output.md     # Phase 5: section structure, findings JSON, output
+│   ├── post-review-triage.md   # Phase 5.5: native-reviewer verdicts
+│   ├── verify-fixes.md         # Phase 6: verifying deployed fixes
+│   ├── bundled-scripts.md      # choosing and running the bundled scripts
 │   └── error-taxonomy.md       # full taxonomy with worked examples
 └── assets/
     ├── config.yml.template

@@ -3,8 +3,8 @@
 collect_browser_dump.py — disk side of the OPFS browser→disk bridge.
 
 When a site bot-blocks scripted HTTP, page content is fetched from
-inside a real browser session (see SKILL.md, "Browser-fetch playbook
-for bot-blocked multi-domain sites"). In automated browser sessions
+inside a real browser session (see references/browser-fetch.md,
+"Browser-fetch playbook for bot-blocked multi-domain sites"). In automated browser sessions
 the usual transfer channels are silently blocked — blob downloads are
 suppressed, clipboard access throws, and localhost POSTs hang on a
 Local Network Access permission no automation can answer. The channel

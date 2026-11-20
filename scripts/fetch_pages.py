@@ -164,7 +164,8 @@ def extract_fields(html: str) -> dict:
     if body_root:
         # Strip noise elements before extracting text. First the obvious
         # template/chrome tags, then the visibility-hidden containers
-        # documented in the skill's Phase 4 mitigations.
+        # documented in the skill's Phase 4 mitigations
+        # (references/rendered-verification.md).
         for tag_name in ("header", "footer", "nav", "aside",
                          "script", "style", "noscript", "form"):
             for el in body_root.find_all(tag_name):
