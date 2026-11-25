@@ -5,7 +5,7 @@ license: CC-BY-4.0
 metadata:
   author: Eoghan Henn and contributors
   source: https://github.com/rebelytics/translation-audit
-  version: "1.5.0"
+  version: "1.6.0"
   core_max_lines: "861"
 ---
 
@@ -536,10 +536,10 @@ For each URL in the batch:
    both sides of (content mismatch, a changed claim) — omit it when the
    excerpt is self-evident (an untranslated English string, a typo, a
    stray tag), where repeating the near-identical source just adds
-   noise. When one root issue spans several elements of the *same page
-   in the same language* (e.g. title + meta + H1 all left in English),
-   give them a shared `issue_group` key so they render as one card
-   instead of repeating the diagnosis per element. If a `highlight` is
+   noise. When one root issue spans several elements of a page, or one
+   pattern repeats across pages, *in the same language* (e.g. title +
+   meta + H1 left in English), give them a shared `issue_group` key so
+   they render as one card, not one block per element. If a `highlight` is
    set, it must point at its occurrence **unambiguously**: a bare
    short token ("and") is a substring of countless longer words, and a
    mis-anchored mark on a correct finding reads as a blunder — include
@@ -711,8 +711,8 @@ credibility with the translators who act on it. Check in order:
    Diagnoses name the anomaly only — no prescribed remedy ("should be
    X", and equally "typo for X" / "instead of X", which prescribe a
    correction in disguise), no asserted impact, nothing the excerpt
-   already makes obvious. One root issue spanning several elements of
-   the same page+language uses a shared `issue_group` instead of
+   already makes obvious. One root issue spanning several elements or
+   pages of one language uses a shared `issue_group` instead of
    repeating the block.
 2. **Hedge by default.** Every finding in **Worth checking** ends with
    a hedge like "could be deliberate", "worth a translator review",
@@ -823,7 +823,7 @@ If any check fails, fix it before presenting the doc to the user.
 | What counts as Worth checking? | A pattern that could plausibly be a deliberate translator choice. |
 | When in doubt? | Worth checking, with a "could be deliberate" hedge. |
 | How long should a diagnosis be? | As short as possible — name the anomaly only. No "should be X", no asserted impact, nothing the excerpt already shows. Many findings need none. |
-| Same issue across a page's title/meta/H1? | Give them one `issue_group` → renders as a single card, not repeated blocks. (`issue_group` is within-language only.) |
+| Same issue across a page's title/meta/H1, or across many pages? | Give them one `issue_group` → a single card; across pages the builder adds the count, caps the card and writes an instances CSV. (`issue_group` is within-language only.) |
 | Same defect in several languages' equivalent field? | Emit it in **every** affected language tab — repetition across tabs is required, not just allowed. `issue_group` does not propagate across languages. |
 | Auditing many locales at once? | One agent per language reading its cached JSON, then TWO mandatory central stages: the verbatim-excerpt gate (drop non-matches; state it in the agent contract; negative-control it), and the claim-verification pass over every assertive finding. Cover all page types, not just core pages. Load `references/scaling-across-locales.md` and `references/claim-verification.md` first. |
 | Clear typo in the body, visibility now confirmed? | Promote to Likely error and strip the hedge — the hedge belonged to the visibility uncertainty, not the error class. |

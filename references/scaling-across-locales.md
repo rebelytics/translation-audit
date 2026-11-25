@@ -82,3 +82,6 @@ language (an English meta layer, a reused homepage meta, legal pages
 naming another market's domain) is reported once with its count in the
 headline and every instance in an accompanying file — listing each
 instance buried the findings in one run (774 cards, 418 after capping).
+`build_audit_doc.py` does both from one `issue_group` spanning the pages
+(`group_caps` / `--max-instances`); the cross-market layer goes in the
+findings' optional `overview` block.

@@ -1,0 +1,30 @@
+{
+  "project_name": "example-shop-audit",
+  "audit_date": "2026-01-15",
+  "batch_number": 3,
+  "source_language": "en",
+  "audited_languages": ["de", "fr", "it"],
+  "coverage": {
+    "de": ["https://example.de/a", "https://example.de/b", "https://example.de/c", "https://example.de/d"],
+    "fr": ["https://example.fr/a", "https://example.fr/b"],
+    "it": ["https://example.it/a"]
+  },
+  "group_caps": {"en-meta": 2},
+  "overview": {
+    "summary": "Two patterns repeat across markets; one market is clean.",
+    "patterns": [
+      {"pattern": "Meta descriptions left in English", "languages": ["de", "fr"], "count": 5, "note": "Template fallback <likely>"}
+    ],
+    "untranslated_areas": ["Checkout help pages"],
+    "open_questions": ["Is the English legal text deliberate for every market?"]
+  },
+  "findings": [
+    {"language": "de", "url": "https://example.de/a", "field": "meta_description", "excerpt": "Shop the new range", "diagnosis": "", "bucket": "likely_error", "issue_group": "en-meta", "issue_title": "Meta descriptions left in English"},
+    {"language": "de", "url": "https://example.de/b", "field": "meta_description", "excerpt": "Shop the new range", "diagnosis": "", "bucket": "likely_error", "issue_group": "en-meta", "issue_title": "Meta descriptions left in English"},
+    {"language": "de", "url": "https://example.de/c", "field": "meta_description", "excerpt": "Free delivery on all orders", "diagnosis": "", "bucket": "likely_error", "issue_group": "en-meta", "issue_title": "Meta descriptions left in English"},
+    {"language": "de", "url": "https://example.de/a", "field": "title", "excerpt": "Startseite | Beispiel", "diagnosis": "Brand token repeated", "bucket": "worth_checking", "issue_group": "brand-a", "issue_title": "Brand token repeated in title and H1"},
+    {"language": "de", "url": "https://example.de/a", "field": "h1", "excerpt": "Beispiel Beispiel", "diagnosis": "Brand token repeated", "bucket": "worth_checking", "issue_group": "brand-a", "issue_title": "Brand token repeated in title and H1"},
+    {"language": "fr", "url": "https://example.fr/a", "field": "meta_description", "excerpt": "Shop the new range", "diagnosis": "", "bucket": "likely_error", "issue_group": "en-meta", "issue_title": "Meta descriptions left in English"},
+    {"language": "fr", "url": "https://example.fr/b", "field": "meta_description", "excerpt": "Free delivery on all orders", "diagnosis": "", "bucket": "likely_error", "issue_group": "en-meta", "issue_title": "Meta descriptions left in English"}
+  ]
+}

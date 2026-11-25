@@ -38,6 +38,15 @@ same one-line diagnosis appearing in several language tabs is expected.
 Repetition **within** a language (the same block restated for title,
 meta and H1 of one page) is what `issue_group` removes.
 
+**A pattern repeating across pages of one language is one card too.**
+Give every instance the same `issue_group`. `build_audit_doc.py` then
+appends the count to the headline ("— 40 instances on 31 pages"), lists
+at most the group's cap on the card (`group_caps` in the findings JSON,
+else `--max-instances`; no cap by default) and writes every instance of
+every cross-page group to `audit-YYYY-MM-DD-batch-NN-instances.csv`
+beside the doc. Leave the count out of `issue_title`: the builder adds
+it (a title that already says "instance" is left as written).
+
 **A grouped card's headline must be true of every item under it.** When an
 `issue_group` bundles several findings, set a group-level `issue_title` that
 describes the whole block (e.g. "Several English strings left untranslated on
@@ -131,6 +140,14 @@ word-boundary matches only and skips marking rather than mark the
 wrong occurrence of an ambiguous token). The full per-finding shape
 is documented at the top of `build_audit_doc.py`.
 
+Two optional top-level blocks serve an overview across many locales:
+`group_caps` (`{"<issue_group>": N}`, the per-group card cap above) and
+`overview` — `summary`, `patterns` (each `pattern`, `languages`,
+`count`, `note`), `untranslated_areas` and `open_questions`. The
+builder renders `overview` as a first **Overview** tab with a
+per-language counts table it computes from the findings and
+`coverage`. Leave it out of an ordinary per-batch audit.
+
 ### Output
 
 Write the reviewer-facing deliverable with the bundled script
@@ -142,6 +159,8 @@ Write the reviewer-facing deliverable with the bundled script
   buckets, and grouped issue cards. Opens in any browser; print to PDF
   for a client hand-off.
 - `findings/audit-YYYY-MM-DD-batch-NN.md` — version-controllable mirror.
+- `findings/audit-YYYY-MM-DD-batch-NN-instances.csv` — every instance of
+  every cross-page group; written only when a group spans pages.
 - `findings/audit-YYYY-MM-DD-batch-NN.docx` — only with `--format docx`
   (requires python-docx).
 

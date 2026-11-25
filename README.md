@@ -120,7 +120,8 @@ translation-audit/
 │   ├── collect_browser_dump.py # OPFS browser→disk bridge (bot-blocked sites)
 │   ├── build_audit_doc.py      # findings JSON → .html + .md (+ docx opt-in)
 │   ├── apply_verdicts.py       # post-review verdict CSV → JSON
-│   └── state.py                # three-list lifecycle bookkeeping
+│   ├── state.py                # three-list lifecycle bookkeeping
+│   └── tests/                  # offline tests for build_audit_doc.py, with a fixture
 ├── references/
 │   ├── ceilings.txt            # declared line ceilings per file
 │   ├── discovery-variants.md   # Phase 2: source-language regional variants

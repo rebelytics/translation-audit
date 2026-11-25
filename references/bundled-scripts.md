@@ -51,7 +51,12 @@ The scripts in `scripts/`:
   complete crawl" scope banner, the Likely errors / Worth checking split,
   a **Pages checked** list per language (from the `coverage` map), and
   collapses findings that share an `issue_group` into one card headlined
-  by `issue_title` (else the first finding's diagnosis). Prefixes
+  by `issue_title` (else the first finding's diagnosis); a group that
+  spans pages gets its count in the headline, is capped by `group_caps`
+  / `--max-instances`, and has every instance written to
+  `…-instances.csv`. An optional `overview` block renders as a first
+  Overview tab. Offline tests, run from the skill directory:
+  `python3 -B -I scripts/tests/test_build_audit_doc.py`. Prefixes
   body-layer findings by `sub_type` (`[DOM-only, not rendered]` /
   `[Visibility unconfirmed …]`), HTML-escapes excerpts so literal markup
   shows verbatim, emits "No issues flagged in this batch." for every

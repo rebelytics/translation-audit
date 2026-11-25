@@ -9,13 +9,13 @@
 # The core's ceiling is metadata.core_max_lines in SKILL.md; its raises are recorded here as comments:
 # released core ceiling: 861 (1.5.0)
 # SKILL.md core_max_lines 861 declared with the split by episode: discovery variants, the browser-fetch playbook, rendered verification, scaling across locales, claim verification, the audit-doc output, post-review triage, fix verification and the bundled scripts moved to the references that own them
-audit-doc-output.md 167
+audit-doc-output.md 186 cross-page issue_group cards with the builder-added count, card cap and instances CSV; the optional group_caps and overview blocks
 browser-fetch.md 49
-bundled-scripts.md 103
+bundled-scripts.md 108 build_audit_doc.py's cross-page cards, overview tab and offline test command
 claim-verification.md 76
 discovery-variants.md 70
 error-taxonomy.md 490
 post-review-triage.md 95
 rendered-verification.md 213
-scaling-across-locales.md 84
+scaling-across-locales.md 87 the builder route for pattern cards and the overview block
 verify-fixes.md 60

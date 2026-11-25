@@ -29,6 +29,16 @@ Findings JSON shape:
       "de": ["https://example.com/de/a", ...], # URLs — renders the "Pages
       "fr": ["https://example.com/fr/a", ...]  # checked" list per language
     },
+    "group_caps": {"en-meta": 8},              # optional: per-issue_group cap on
+                                               # the instances a card lists
+                                               # (overrides --max-instances)
+    "overview": {                              # optional: cross-market overview,
+      "summary": "...",                        # rendered as its own first tab
+      "patterns": [{"pattern": "...", "languages": ["de", "fr"],
+                    "count": 12, "note": "..."}],
+      "untranslated_areas": ["..."],
+      "open_questions": ["..."]
+    },
     "findings": [
       {
         "language": "de",
@@ -41,7 +51,8 @@ Findings JSON shape:
         "sub_type": null,                     # "dom_only_not_rendered"
                                               # or "visibility_unconfirmed"
         "issue_group": null,                  # optional: findings that share
-                                              # this key (within one language)
+                                              # this key (within one language,
+                                              # on one page or across pages)
                                               # render as ONE card with several
                                               # instances, instead of repeating
                                               # the same diagnosis per element
@@ -68,9 +79,20 @@ is untranslated). Most findings need a few words or none at all.
 Grouping: within a single language section, findings that share an
 `issue_group` are rendered as one card — the diagnosis is stated once
 and each affected element (field + URL + excerpt) is listed beneath
-it. This removes the across-element repetition. Repetition ACROSS
-languages is intentional: each language tab is self-contained so it
-can be handed to that market's reviewer on its own.
+it. This removes the across-element repetition. A group may span
+pages of one language (one card per repeating pattern): its headline
+then gets the count ("— N instances on P pages"), the card lists at
+most the group's cap (`group_caps`, else `--max-instances`; no cap by
+default), and every instance of every cross-page group is written to
+`audit-…-instances.csv` beside the doc. Repetition ACROSS languages is
+intentional: each language tab is self-contained so it can be handed
+to that market's reviewer on its own.
+
+Overview: an optional findings-level `overview` block renders as a
+first "Overview" tab (a section in the Markdown and Word files):
+summary, the cross-market patterns table, a per-language counts table
+computed from the findings and `coverage`, untranslated areas, and
+open questions for the team.
 
 Body sub-types prefix the diagnosis:
   - "dom_only_not_rendered"   → "[DOM-only, not rendered]"
@@ -84,6 +106,8 @@ independently.
 Output:
   findings/audit-YYYY-MM-DD-batch-NN.html   (primary)
   findings/audit-YYYY-MM-DD-batch-NN.md     (mirror)
+  findings/audit-YYYY-MM-DD-batch-NN-instances.csv
+                                            (only when a group spans pages)
   findings/audit-YYYY-MM-DD-batch-NN.docx   (only with --format docx)
 
 Usage:
@@ -92,6 +116,7 @@ Usage:
 """
 
 import argparse
+import csv
 import html
 import json
 import re
@@ -183,16 +208,41 @@ def group_findings(findings: list):
     return grouped, lang_order
 
 
-def group_issues(items: list):
+INSTANCES_LABEL = "the instances file"
+
+
+def instances_filename(payload: dict) -> str:
+    audit_date = payload.get("audit_date", "")
+    batch = payload.get("batch_number", 0)
+    batch_str = f"{batch:02d}" if isinstance(batch, int) else str(batch)
+    return f"audit-{audit_date}-batch-{batch_str}-instances.csv"
+
+
+def _cap_for(key: str, caps: dict, default_cap):
+    cap = (caps or {}).get(key, default_cap)
+    try:
+        cap = int(cap) if cap is not None else None
+    except (TypeError, ValueError):
+        cap = default_cap
+    return cap if cap and cap > 0 else None
+
+
+def group_issues(items: list, caps: dict = None, default_cap=None,
+                 instances_label: str = INSTANCES_LABEL):
     """Collapse findings that share an `issue_group` into one issue with
     several instances. Findings without an issue_group stay solo. Order
     is preserved by first appearance. Each issue dict carries:
       diagnosis      — card headline: the group's `issue_title` if any finding
                        sets one (so it describes the whole block), else the
-                       first finding's diagnosis
+                       first finding's diagnosis; a group spanning several
+                       pages gets "— N instances on P pages" appended
+                       (unless its issue_title already names "instance"),
+                       and "; K shown, all in <instances file>" when capped
       shared_source  — the source_excerpt if identical across instances,
                        else None (then each instance shows its own)
-      instances      — the original finding dicts
+      instances      — the finding dicts the card lists (at most the cap)
+      total, pages   — instance and distinct-URL counts of the whole group
+      cross_page     — True when one issue_group spans several pages
     """
     order, groups = [], {}
     for i, f in enumerate(items):
@@ -217,12 +267,101 @@ def group_issues(items: list):
             headline = f"{prefix} {title}".strip() if prefix else title.strip()
         else:
             headline = diagnosis_with_prefix(fs[0])
+        pages = len({g.get("url") for g in fs})
+        cross_page = not key.startswith("__solo_") and pages > 1
+        shown = fs
+        if cross_page:
+            # A title that already states its count (findings JSON written
+            # before the builder added counts) is left as written.
+            if "instance" not in (title or "").lower():
+                headline = f"{headline} — {len(fs)} instances on {pages} pages"
+            cap = _cap_for(key, caps, default_cap)
+            if cap and len(fs) > cap:
+                shown = fs[:cap]
+                headline += f"; {cap} shown, all in {instances_label}"
         issues.append({
             "diagnosis": headline,
             "shared_source": shared or None,
-            "instances": fs,
+            "instances": shown,
+            "total": len(fs),
+            "pages": pages,
+            "cross_page": cross_page,
         })
     return issues
+
+
+def cross_page_rows(payload: dict) -> list:
+    """Every instance of every issue_group that spans several pages of one
+    language, for the instances CSV. Empty when no group spans pages."""
+    grouped, lang_order = group_findings(payload.get("findings", []))
+    rows = []
+    for lang in lang_order:
+        for bucket in BUCKETS:
+            items = grouped[lang].get(bucket, [])
+            by_key = defaultdict(list)
+            for f in items:
+                if f.get("issue_group"):
+                    by_key[f["issue_group"]].append(f)
+            for key, fs in by_key.items():
+                if len({g.get("url") for g in fs}) < 2:
+                    continue
+                title = next((g.get("issue_title") for g in fs
+                              if (g.get("issue_title") or "").strip()), None)
+                issue = (title or diagnosis_with_prefix(fs[0])).strip()
+                for g in fs:
+                    rows.append({
+                        "language": lang,
+                        "bucket": bucket,
+                        "issue_group": key,
+                        "issue": issue,
+                        "url": g.get("url", ""),
+                        "field": g.get("field", ""),
+                        "excerpt": (g.get("excerpt") or "").strip(),
+                        "source_excerpt": (g.get("source_excerpt") or "").strip(),
+                    })
+    return rows
+
+
+INSTANCE_COLUMNS = ["language", "bucket", "issue_group", "issue", "url",
+                    "field", "excerpt", "source_excerpt"]
+
+
+def write_instances_csv(payload: dict, path: Path) -> int:
+    rows = cross_page_rows(payload)
+    if not rows:
+        return 0
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=INSTANCE_COLUMNS)
+        w.writeheader()
+        w.writerows(rows)
+    return len(rows)
+
+
+def overview_counts(payload: dict, languages: list) -> list:
+    """Per-language rows for the overview: pages checked, likely, worth."""
+    coverage = payload.get("coverage", {}) or {}
+    counts = {}
+    for f in payload.get("findings", []):
+        c = counts.setdefault(f.get("language"), {"likely_error": 0, "worth_checking": 0})
+        c[normalise_bucket(f.get("bucket", ""))] += 1
+    rows = []
+    for lang in languages:
+        c = counts.get(lang, {"likely_error": 0, "worth_checking": 0})
+        rows.append({
+            "language": lang,
+            "pages": len(coverage.get(lang, []) or []),
+            "likely_error": c["likely_error"],
+            "worth_checking": c["worth_checking"],
+        })
+    return rows
+
+
+def _str_list(value) -> list:
+    if not value:
+        return []
+    if isinstance(value, str):
+        return [value]
+    return [str(v) for v in value if str(v).strip()]
 
 
 def coverage_order(payload: dict, lang_order: list) -> list:
@@ -248,7 +387,9 @@ def _md_code(text: str) -> str:
     return "`" + text.replace("\n", " ") + "`"
 
 
-def build_markdown(payload: dict) -> str:
+def build_markdown(payload: dict, default_cap=None,
+                   instances_label: str = INSTANCES_LABEL) -> str:
+    caps = payload.get("group_caps") or {}
     out = []
     project = payload.get("project_name", "Translation audit")
     audit_date = payload.get("audit_date", "")
@@ -287,6 +428,43 @@ def build_markdown(payload: dict) -> str:
                    f"came back clean.")
         out.append("")
 
+    overview = payload.get("overview") or None
+    if overview:
+        out.append("## Overview")
+        out.append("")
+        if (overview.get("summary") or "").strip():
+            out.append(overview["summary"].strip())
+            out.append("")
+        patterns = overview.get("patterns") or []
+        if patterns:
+            out.append("### Patterns across markets")
+            out.append("")
+            out.append("| Pattern | Languages | Count | Note |")
+            out.append("|---|---|---|---|")
+            for p in patterns:
+                langs = ", ".join(_str_list(p.get("languages")))
+                cell = lambda v: str(v if v is not None else "").replace("|", "\\|").replace("\n", " ")
+                out.append(f"| {cell(p.get('pattern'))} | {cell(langs)} | "
+                           f"{cell(p.get('count'))} | {cell(p.get('note'))} |")
+            out.append("")
+        out.append("### Per language")
+        out.append("")
+        out.append("| Language | Pages checked | Likely errors | Worth checking |")
+        out.append("|---|---|---|---|")
+        for r in overview_counts(payload, languages):
+            out.append(f"| {language_label(r['language'])} | {r['pages']} | "
+                       f"{r['likely_error']} | {r['worth_checking']} |")
+        out.append("")
+        for key, label in (("untranslated_areas", "Untranslated areas"),
+                           ("open_questions", "Open questions for the team")):
+            entries = _str_list(overview.get(key))
+            if entries:
+                out.append(f"### {label}")
+                out.append("")
+                for e in entries:
+                    out.append(f"- {e}")
+                out.append("")
+
     for lang in languages:
         out.append(f"## {language_label(lang)}")
         out.append("")
@@ -308,7 +486,7 @@ def build_markdown(payload: dict) -> str:
                 continue
             out.append(f"### {BUCKET_LABELS[bucket]}")
             out.append("")
-            for issue in group_issues(items):
+            for issue in group_issues(items, caps, default_cap, instances_label):
                 diag = issue["diagnosis"]
                 if diag:
                     out.append(f"- {diag}")
@@ -415,6 +593,13 @@ nav.tabs{position:sticky;top:0;z-index:5;background:var(--bg);
   font-weight:700;color:#9aa5b1;margin-right:4px}
 .src-line code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   background:#f2f4f7;border-radius:4px;padding:1px 5px;color:#56616d}
+.ov h3{font-size:15px;margin:22px 0 8px}
+.ov p{margin:0 0 12px}
+.ov table{border-collapse:collapse;width:100%;font-size:13.5px;background:#fff;
+  border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.ov th,.ov td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.ov th{background:#f2f4f7;font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:#56616d}
+.ov ul{margin:0;padding-left:18px}
 .clean{background:#e9f6ee;border:1px solid #cce8d6;color:#2e7d46;border-radius:10px;
   padding:16px 18px;font-size:14.5px}
 footer.report{color:var(--muted);font-size:12.5px;border-top:1px solid var(--line);
@@ -502,7 +687,10 @@ def _excerpt_html(text: str, highlight: str = None) -> str:
     return "".join(out)
 
 
-def build_html(payload: dict) -> str:
+def build_html(payload: dict, default_cap=None,
+               instances_label: str = INSTANCES_LABEL) -> str:
+    caps = payload.get("group_caps") or {}
+    overview = payload.get("overview") or None
     project = payload.get("project_name", "Translation audit")
     audit_date = payload.get("audit_date", "")
     batch = payload.get("batch_number", "")
@@ -566,18 +754,53 @@ def build_html(payload: dict) -> str:
 
     # Tabs (first tab active by default so the report renders even without JS)
     P.append('<nav class="tabs" role="tablist">')
+    if overview:
+        P.append('<button class="tab active" role="tab" data-lang="overview">Overview</button>')
     for i, lang in enumerate(languages):
         c = bucket_counts(grouped, lang) if lang in grouped else {"likely_error": 0, "worth_checking": 0}
         n = c["likely_error"] + c["worth_checking"]
         badge = f'<span class="badge zero">&#10003;</span>' if n == 0 else f'<span class="badge">{n}</span>'
-        active = " active" if i == 0 else ""
+        active = " active" if i == 0 and not overview else ""
         P.append(f'<button class="tab{active}" role="tab" data-lang="{_esc(lang)}">'
                  f'{_esc(language_label(lang))}{badge}</button>')
     P.append("</nav>")
 
-    # Panels (first panel active by default)
+    # Overview panel (first and active when present)
+    if overview:
+        P.append('<section class="panel active ov" id="panel-overview" role="tabpanel">')
+        P.append("<h2>Overview</h2>")
+        if (overview.get("summary") or "").strip():
+            P.append(f"<p>{_esc(overview['summary'])}</p>")
+        patterns = overview.get("patterns") or []
+        if patterns:
+            P.append("<h3>Patterns across markets</h3><table><tr><th>Pattern</th>"
+                     "<th>Languages</th><th>Count</th><th>Note</th></tr>")
+            for p in patterns:
+                langs = ", ".join(_str_list(p.get("languages")))
+                cnt = p.get("count")
+                P.append(f"<tr><td>{_esc(str(p.get('pattern') or ''))}</td><td>{_esc(langs)}</td>"
+                         f"<td>{_esc('' if cnt is None else str(cnt))}</td>"
+                         f"<td>{_esc(str(p.get('note') or ''))}</td></tr>")
+            P.append("</table>")
+        P.append("<h3>Per language</h3><table><tr><th>Language</th><th>Pages checked</th>"
+                 "<th>Likely errors</th><th>Worth checking</th></tr>")
+        for r in overview_counts(payload, languages):
+            P.append(f"<tr><td>{_esc(language_label(r['language']))}</td><td>{r['pages']}</td>"
+                     f"<td>{r['likely_error']}</td><td>{r['worth_checking']}</td></tr>")
+        P.append("</table>")
+        for key, label in (("untranslated_areas", "Untranslated areas"),
+                           ("open_questions", "Open questions for the team")):
+            entries = _str_list(overview.get(key))
+            if entries:
+                P.append(f"<h3>{label}</h3><ul>")
+                for e in entries:
+                    P.append(f"<li>{_esc(e)}</li>")
+                P.append("</ul>")
+        P.append("</section>")
+
+    # Panels (first panel active by default, unless the overview is first)
     for i, lang in enumerate(languages):
-        active = " active" if i == 0 else ""
+        active = " active" if i == 0 and not overview else ""
         P.append(f'<section class="panel{active}" id="panel-{_esc(lang)}" role="tabpanel">')
         P.append(f"<h2>{_esc(language_label(lang))}</h2>")
         cov = coverage.get(lang, [])
@@ -600,7 +823,7 @@ def build_html(payload: dict) -> str:
             cls = "likely" if bucket == "likely_error" else "worth"
             P.append(f'<div class="bucket {cls}"><h3>{BUCKET_LABELS[bucket]}'
                      f'<span class="count">{len(items)}</span></h3>')
-            for issue in group_issues(items):
+            for issue in group_issues(items, caps, default_cap, instances_label):
                 P.append(f'<article class="finding {cls}">')
                 if issue["diagnosis"]:
                     P.append(f'<div class="diag">{_esc(issue["diagnosis"])}</div>')
@@ -640,7 +863,8 @@ def build_html(payload: dict) -> str:
 # DOCX (legacy / on request — grouped, but plainly styled)
 # --------------------------------------------------------------------------
 
-def build_docx(payload: dict, output_path: Path) -> None:
+def build_docx(payload: dict, output_path: Path, default_cap=None,
+               instances_label: str = INSTANCES_LABEL) -> None:
     try:
         from docx import Document
     except ImportError:
@@ -671,6 +895,32 @@ def build_docx(payload: dict, output_path: Path) -> None:
         document.save(output_path)
         return
 
+    overview = payload.get("overview") or None
+    if overview:
+        document.add_heading("Overview", level=2)
+        if (overview.get("summary") or "").strip():
+            document.add_paragraph(overview["summary"].strip())
+        for p in overview.get("patterns") or []:
+            langs = ", ".join(_str_list(p.get("languages")))
+            line = f"{p.get('pattern') or ''} — {langs}"
+            if p.get("count") is not None:
+                line += f" ({p.get('count')})"
+            if (p.get("note") or "").strip():
+                line += f": {p.get('note').strip()}"
+            document.add_paragraph(line, style="List Bullet")
+        for r in overview_counts(payload, languages):
+            document.add_paragraph(
+                f"{language_label(r['language'])}: {r['pages']} pages checked, "
+                f"{r['likely_error']} likely errors, {r['worth_checking']} worth checking")
+        for key, label in (("untranslated_areas", "Untranslated areas"),
+                           ("open_questions", "Open questions for the team")):
+            entries = _str_list(overview.get(key))
+            if entries:
+                document.add_heading(label, level=3)
+                for e in entries:
+                    document.add_paragraph(e, style="List Bullet")
+
+    caps = payload.get("group_caps") or {}
     for lang in languages:
         document.add_heading(language_label(lang), level=2)
         if lang not in grouped or not any(grouped[lang].get(b) for b in BUCKETS):
@@ -681,7 +931,7 @@ def build_docx(payload: dict, output_path: Path) -> None:
             if not items:
                 continue
             document.add_heading(BUCKET_LABELS[bucket], level=3)
-            for issue in group_issues(items):
+            for issue in group_issues(items, caps, default_cap, instances_label):
                 if issue["diagnosis"]:
                     p = document.add_paragraph(style="List Bullet")
                     p.add_run(issue["diagnosis"])
@@ -729,6 +979,10 @@ def main():
     parser.add_argument("--format", default="html,md",
                         help="Comma-separated formats: html, md, docx (default 'html,md'). "
                              "docx requires python-docx and is opt-in.")
+    parser.add_argument("--max-instances", type=int, default=None,
+                        help="Cap the instances a cross-page issue_group card lists "
+                             "(the rest go to the instances CSV). A group's entry in "
+                             "the findings' group_caps overrides it. Default: no cap.")
     args = parser.parse_args()
 
     project_dir = Path(args.project_dir)
@@ -752,21 +1006,28 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     formats = [f.strip().lower() for f in args.format.split(",") if f.strip()]
+    cap = args.max_instances
+    label = instances_filename(payload)
 
     if "html" in formats:
         html_path = output_dir / f"{stem}.html"
-        html_path.write_text(build_html(payload), encoding="utf-8")
+        html_path.write_text(build_html(payload, cap, label), encoding="utf-8")
         print(f"Wrote {html_path}", file=sys.stderr)
 
     if "md" in formats:
         md_path = output_dir / f"{stem}.md"
-        md_path.write_text(build_markdown(payload), encoding="utf-8")
+        md_path.write_text(build_markdown(payload, cap, label), encoding="utf-8")
         print(f"Wrote {md_path}", file=sys.stderr)
 
     if "docx" in formats:
         docx_path = output_dir / f"{stem}.docx"
-        build_docx(payload, docx_path)
+        build_docx(payload, docx_path, cap, label)
         print(f"Wrote {docx_path}", file=sys.stderr)
+
+    csv_path = output_dir / label
+    n_rows = write_instances_csv(payload, csv_path)
+    if n_rows:
+        print(f"Wrote {csv_path} ({n_rows} instances)", file=sys.stderr)
 
 
 if __name__ == "__main__":
